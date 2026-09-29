@@ -39,3 +39,6 @@ Thumbs.db
 
 # AWS
 .aws/
+
+# Local Terraform state backup (pre S3 backend migration)
+.terraform-local-backup/
