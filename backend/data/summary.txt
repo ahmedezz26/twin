@@ -1,0 +1,44 @@
+My name is Ahmed Ezzeldeen Mahmoud Ibrahim.
+I am an AI-ADAS System engineer.
+I have a B1 driving license for vehicle testing from BMW.
+
+here is the summary of courses I have took:
+AI/ML & LLM Engineering:
+AI Engineer Core Track: LLM Engineering, RAG, QLoRA, Agents (Udemy, May 2026) — this is the Ed Donner course you've mentioned before. 8 real-world AI apps built across 20+ models, covering RAG/vector DBs, QLoRA fine-tuning, AI agents/function-calling, HuggingFace/LangChain/Gradio, and multi-modal apps. Notable projects: a multi-modal airline support agent, a RAG enterprise Q&A tool, a Python-to-C++ optimizer (60,000× speedup), a fine-tuned model for price prediction, and an autonomous deal-spotting agent — this last one sounds closely related to your resume chatbot work.
+
+Deep Learning Foundations:
+
+Neural Networks and Deep Learning — DeepLearning.AI, Apr 2022
+Improving Deep Neural Networks: Hyperparameter Tuning, Regularization and Optimization — DeepLearning.AI, Jul 2022
+(These look like the first two courses of Andrew Ng's Deep Learning Specialization.)
+
+Automotive / Embedded Systems:
+
+Introduction to Self-Driving Cars — Coursera, Feb 2023
+ARM Architecture Course and AUTOSAR Software Layers — MT, Apr 2021
+Embedded System Diploma — MT, Feb 2021
+
+Mechanical Design / CAD / Simulation:
+
+ENGR2000X: A Hands-on Introduction to Engineering Simulations — Cornell University, Sep 2020
+Certified SOLIDWORKS Mechanical Design Associate — Dassault Systèmes, Jul 2020
+Ansys Static Analysis – FEA Basics — Udemy, May 2020
+Autodesk Inventor — Udemy, Apr 2020
+SOLIDWORKS: Animations — LinkedIn Learning, Apr 2020
+SOLIDWORKS: Design for Mechatronics — LinkedIn Learning, Apr 2020
+Mechanical Design Part 1 & 2 — Udemy, Apr 2020
+
+Professional/Soft Skills:
+
+Strategic Human Resources — LinkedIn Learning, Mar 2020
+Excel: Creating a Basic Dashboard — LinkedIn Learning, Mar 2020
+Productivity Tips: Finding Your Productive Mindset — LinkedIn Learning, Mar 2020
+Time Management: Working from Home — LinkedIn Learning
+
+
+latest updates:
+By December 2025, I had a trip to Valeo’s Wuhan and Shenzhen sites in China, my primary focus was on global knowledge transfer and training local engineering teams on the intricacies of Adaptive Cruise Control (ACC) logic. Experiencing the rapid, boundary-pushing ADAS innovations from Chinese OEMs firsthand served as a powerful catalyst. Rather than feeling intimidated by the pace of the market, I viewed this high-velocity environment as an exciting challenge that pushes us to refine our global solutions and maintain a cutting-edge standard in automotive safety.
+
+By February 2026, my focus shifted to critical hands-on validation at the Renault test tracks at France. Working to launch a vehicle with its first-ever ACC function, I concentrated on fine-tuning the torque controller to ensure seamless, comfortable, and safe longitudinal control. This massive milestone culminated in successful real-world trials navigating the dense, dynamic traffic of the Paris Périphérique, highlighting the incredible cross-team collaboration required to bring these advanced features to the open road.
+
+Later in June 2026, I completed an intense, multi-country European testing tour collaborating with several major OEMs. Alongside earning my BMW B1 vehicle testing qualification in Munich, I conducted ACC tuning for Volkswagen in Prague and Volvo in Sweden, validating systems across diverse terrains from Scandinavian highways to demanding urban centers. This rigorous journey reinforced my core engineering philosophy: while simulation is valuable, nothing can replace the deep insights and customer-focused validation gained from pushing vehicles to their limits in diverse, real-world conditions.
