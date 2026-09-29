@@ -82,7 +82,7 @@ jobs:
       - name: Invalidate CloudFront
         run: |
           DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?Origins.Items[?DomainName=='${{ steps.deploy_outputs.outputs.frontend_bucket }}.s3-website-${{ secrets.DEFAULT_AWS_REGION }}.amazonaws.com']].Id | [0]" \
+            --query "DistributionList.Items[?Origins.Items[?starts_with(DomainName, '${{ steps.deploy_outputs.outputs.frontend_bucket }}.s3-website')]].Id | [0]" \
             --output text)
           
           if [ "$DISTRIBUTION_ID" != "None" ] && [ -n "$DISTRIBUTION_ID" ]; then
