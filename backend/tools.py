@@ -7,6 +7,8 @@ import urllib.request
 from typing import Dict, List, Optional
 
 import boto3
+import dns.exception
+import dns.resolver
 from botocore.exceptions import ClientError
 
 from knowledge import save_pending
@@ -17,7 +19,10 @@ MAX_NOTIFICATIONS_PER_SESSION = 3
 # Visitor-supplied text is cut to this length before it is sent
 MAX_FIELD_LENGTH = 500
 
+# Format check only - it cannot tell whether the mailbox itself exists
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Seconds allowed for the DNS lookup of an email domain
+DNS_LOOKUP_SECONDS = 3
 
 _s3_client = None
 
@@ -123,10 +128,44 @@ def _notify(session_id: str, text: str) -> Optional[int]:
     return message_id
 
 
+def email_domain_accepts_mail(domain: str) -> bool:
+    """Check that the email's domain is set up to receive email (MX record, or an address record as fallback).
+
+    This catches invented domains, but it cannot prove that the mailbox itself exists.
+    If DNS itself fails (timeout, no nameservers), the email is accepted so real leads are never lost.
+    """
+    try:
+        answers = dns.resolver.resolve(domain, "MX", lifetime=DNS_LOOKUP_SECONDS)
+        # A "null MX" record (RFC 7505) means the domain explicitly accepts no email
+        return any(record.exchange.to_text() != "." for record in answers)
+    except dns.resolver.NXDOMAIN:
+        return False
+    except dns.resolver.NoAnswer:
+        # No MX record: mail servers fall back to the domain's address record
+        for record_type in ("A", "AAAA"):
+            try:
+                dns.resolver.resolve(domain, record_type, lifetime=DNS_LOOKUP_SECONDS)
+                return True
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                continue
+            except dns.exception.DNSException:
+                return True
+        return False
+    except dns.exception.DNSException as e:
+        print(f"Email domain check skipped ({type(e).__name__}) for {domain}")
+        return True
+
+
 def record_user_details(session_id: str, email: str, name: str = "Name not provided", notes: str = "not provided"):
     email = (email or "").strip()
     if not EMAIL_PATTERN.match(email) or len(email) > 254:
         return {"status": "error", "message": "That email address doesn't look valid. Ask the user to check it."}
+
+    if not email_domain_accepts_mail(email.rsplit("@", 1)[1]):
+        return {
+            "status": "error",
+            "message": "That email domain doesn't seem to receive email. Ask the user to double-check the address.",
+        }
 
     if _get_notification_count(session_id) >= MAX_NOTIFICATIONS_PER_SESSION:
         return {"status": "error", "message": "Limit reached. Tell the user their details are noted and Ahmed will be in touch."}

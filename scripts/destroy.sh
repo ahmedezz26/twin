@@ -31,8 +31,8 @@ terraform init -input=false -reconfigure \
   -backend-config="use_lockfile=true" \
   -backend-config="encrypt=true"
 
-# Check if workspace exists
-if ! terraform workspace list | grep -q "$ENVIRONMENT"; then
+# Check if workspace exists (exact name match)
+if ! terraform workspace list | sed 's/^[* ]*//' | grep -qx "$ENVIRONMENT"; then
     echo "❌ Error: Workspace '$ENVIRONMENT' does not exist"
     echo "Available workspaces:"
     terraform workspace list
@@ -80,6 +80,13 @@ else
 fi
 
 echo "✅ Infrastructure for ${ENVIRONMENT} has been destroyed!"
+echo ""
+echo "ℹ️ Kept on purpose (not managed by this environment):"
+echo "   - Learned Q&A in s3://${PROJECT_NAME}-knowledge-${AWS_ACCOUNT_ID}"
+echo "   - Secrets in SSM Parameter Store (/${PROJECT_NAME}/...)"
+echo ""
+echo "📨 The Telegram webhook still points at the deleted API. After deploying again, run:"
+echo "   ./scripts/set_telegram_webhook.sh ${ENVIRONMENT}"
 echo ""
 echo "💡 To remove the workspace completely, run:"
 echo "   terraform workspace select default"
