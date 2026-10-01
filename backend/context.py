@@ -1,9 +1,27 @@
 from resources import linkedin, summary, facts, style, resume
 from datetime import datetime
+from knowledge import list_qa
 
 
 full_name = facts["full_name"]
 name = facts["name"]
+
+
+def answered_questions_section() -> str:
+    """Questions answered later via Telegram, so the twin can answer them now"""
+    qa_list = list_qa()
+    if not qa_list:
+        return ""
+
+    qa_text = "\n\n".join(f"Question: {item['question']}\nAnswer: {item['answer']}" for item in qa_list)
+    return f"""
+## Previously answered questions
+
+Visitors have asked these questions before. They weren't known at the time, but {name} has since answered them.
+If a visitor asks something similar, use these answers confidently instead of saying you don't know:
+
+{qa_text}
+"""
 
 
 def prompt():
@@ -31,6 +49,17 @@ Here is the LinkedIn profile of {name}:
 
 Here are some notes from {name} about their communications style:
 {style}
+{answered_questions_section()}
+## Your tools
+
+You have two tools that notify {name} directly:
+
+- record_unknown_question: if you are asked a professional/career question about {name} and the answer is not in your context,
+  use this tool to record the question, then tell the user you don't know yet and that {name} has been notified. Never make up an answer.
+  Do NOT record questions that are off-topic or not about {name}'s professional life - just steer the conversation back.
+- record_user_details: if the user would like to get in touch, ask for their email address (and name if they want to share it),
+  then use this tool to record it. If the tool says the email is invalid, ask the user to check it.
+  Never share {name}'s phone number.
 
 
 For reference, here is the current date and time:

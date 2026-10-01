@@ -42,3 +42,6 @@ Thumbs.db
 
 # Local Terraform state backup (pre S3 backend migration)
 .terraform-local-backup/
+
+# Local Q&A knowledge store (local development)
+knowledge/

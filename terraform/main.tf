@@ -16,6 +16,14 @@ locals {
   # so the key never ends up in the Terraform state
   openrouter_key_param = "/${var.project_name}/${var.environment}/openrouter_api_key"
 
+  # Telegram bot settings (bot token, webhook secret, chat id) - also created by hand in SSM,
+  # shared by all environments because there is one bot
+  telegram_param_prefix = "/${var.project_name}/telegram"
+
+  # Q&A the twin learns from Telegram replies - this bucket is created by hand, NOT by Terraform,
+  # so destroying an environment never wipes what the twin has learned
+  knowledge_bucket = "${var.project_name}-knowledge-${data.aws_caller_identity.current.account_id}"
+
   common_tags = {
     Project     = var.project_name
     Environment = var.environment
@@ -116,7 +124,7 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
 }
 
-# Allow the Lambda to read only the OpenRouter API key parameter
+# Allow the Lambda to read only the OpenRouter API key and the Telegram parameters
 resource "aws_iam_role_policy" "lambda_ssm_openrouter_key" {
   name = "${local.name_prefix}-read-openrouter-key"
   role = aws_iam_role.lambda_role.id
@@ -125,9 +133,12 @@ resource "aws_iam_role_policy" "lambda_ssm_openrouter_key" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = "ssm:GetParameter"
-        Resource = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openrouter_key_param}"
+        Effect = "Allow"
+        Action = "ssm:GetParameter"
+        Resource = [
+          "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openrouter_key_param}",
+          "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.telegram_param_prefix}/*",
+        ]
       }
     ]
   })
@@ -158,6 +169,11 @@ resource "aws_lambda_function" "api" {
       OPENROUTER_MODEL            = var.openrouter_model
       OPENROUTER_REASONING_EFFORT = var.openrouter_reasoning_effort
       OPENROUTER_API_KEY_PARAM    = local.openrouter_key_param
+      KNOWLEDGE_BUCKET            = local.knowledge_bucket
+      # Parameter names only - the Lambda reads the values from SSM at runtime
+      TELEGRAM_BOT_TOKEN_PARAM      = "${local.telegram_param_prefix}/bot_token"
+      TELEGRAM_WEBHOOK_SECRET_PARAM = "${local.telegram_param_prefix}/webhook_secret"
+      TELEGRAM_CHAT_ID_PARAM        = "${local.telegram_param_prefix}/chat_id"
     }
   }
 
@@ -214,6 +230,13 @@ resource "aws_apigatewayv2_route" "post_chat" {
 resource "aws_apigatewayv2_route" "get_health" {
   api_id    = aws_apigatewayv2_api.main.id
   route_key = "GET /health"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# Telegram calls this when Ahmed replies to an unanswered-question notification
+resource "aws_apigatewayv2_route" "post_telegram_webhook" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /telegram-webhook"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 

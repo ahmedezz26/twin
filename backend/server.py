@@ -1,16 +1,21 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 from typing import Optional, List, Dict
+import hmac
 import json
+import traceback
 import uuid
 from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
 from openai import OpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from context import prompt
+from knowledge import add_qa, pop_pending
+from ssm_secrets import get_secret
+from tools import get_telegram_chat_id, handle_tool_calls, send_telegram, tools
 
 # Load environment variables
 load_dotenv()
@@ -31,9 +36,8 @@ app.add_middleware(
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-5-mini")
 REASONING_EFFORT = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
-# On Lambda the API key is read from SSM Parameter Store (only the parameter name is in the environment).
-# Locally, OPENROUTER_API_KEY from .env takes priority.
-OPENROUTER_API_KEY_PARAM = os.getenv("OPENROUTER_API_KEY_PARAM", "")
+# Tool-calling rounds per message before the model must answer without tools
+MAX_TOOL_ROUNDS = 3
 
 # Created on first use and reused while the Lambda container stays warm
 _llm_client: Optional[OpenAI] = None
@@ -106,30 +110,11 @@ def save_conversation(session_id: str, messages: List[Dict]):
             json.dump(messages, f, indent=2)
 
 
-def get_openrouter_api_key() -> Optional[str]:
-    """Get the OpenRouter API key from the local environment, or from SSM Parameter Store on Lambda"""
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if api_key:
-        return api_key
-
-    if OPENROUTER_API_KEY_PARAM:
-        try:
-            ssm_client = boto3.client("ssm")
-            response = ssm_client.get_parameter(Name=OPENROUTER_API_KEY_PARAM, WithDecryption=True)
-            return response["Parameter"]["Value"]
-        except ClientError as e:
-            # Log only the error code - never the parameter value
-            print(f"Could not read SSM parameter {OPENROUTER_API_KEY_PARAM}: {e.response['Error']['Code']}")
-            return None
-
-    return None
-
-
 def get_llm_client() -> OpenAI:
     """Create the OpenRouter client on first use and reuse it afterwards"""
     global _llm_client
     if _llm_client is None:
-        api_key = get_openrouter_api_key()
+        api_key = get_secret("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_PARAM")
         if not api_key:
             print("OpenRouter API key not configured: set OPENROUTER_API_KEY or OPENROUTER_API_KEY_PARAM")
             raise HTTPException(status_code=500, detail="AI service not configured")
@@ -142,24 +127,15 @@ def get_llm_client() -> OpenAI:
     return _llm_client
 
 
-def call_llm(conversation: List[Dict], user_message: str) -> str:
-    """Call the LLM through OpenRouter with conversation history"""
-
-    # System prompt first
-    messages = [{"role": "system", "content": prompt()}]
-
-    # Add conversation history (limit to last 25 exchanges)
-    for msg in conversation[-50:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-
-    # Add current user message
-    messages.append({"role": "user", "content": user_message})
-
+def complete(messages: List[Dict], tool_choice: str = "auto"):
+    """One OpenRouter call, with errors mapped to safe HTTP responses"""
     try:
         # GPT-5 mini is a reasoning model: it doesn't accept temperature/top_p
-        response = get_llm_client().chat.completions.create(
+        return get_llm_client().chat.completions.create(
             model=OPENROUTER_MODEL,
             messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
             max_tokens=4000,
             extra_body={"reasoning": {"effort": REASONING_EFFORT}},
         )
@@ -178,6 +154,30 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
         if e.status_code == 429:
             raise HTTPException(status_code=429, detail="Too many requests, please try again shortly")
         raise HTTPException(status_code=502, detail="AI service error")
+
+
+def call_llm(conversation: List[Dict], user_message: str, session_id: str) -> str:
+    """Call the LLM through OpenRouter with conversation history, running any tools it asks for"""
+
+    # System prompt first
+    messages = [{"role": "system", "content": prompt()}]
+
+    # Add conversation history (limit to last 25 exchanges)
+    for msg in conversation[-50:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Add current user message
+    messages.append({"role": "user", "content": user_message})
+
+    response = complete(messages)
+    rounds = 0
+    while response.choices[0].finish_reason == "tool_calls" and response.choices[0].message.tool_calls:
+        rounds += 1
+        assistant_message = response.choices[0].message
+        messages.append(assistant_message.model_dump(exclude_none=True))
+        messages.extend(handle_tool_calls(assistant_message.tool_calls, session_id))
+        # After MAX_TOOL_ROUNDS the model has to answer without calling more tools
+        response = complete(messages, tool_choice="none" if rounds >= MAX_TOOL_ROUNDS else "auto")
 
     content = response.choices[0].message.content
     if not content:
@@ -216,7 +216,7 @@ async def chat(request: ChatRequest):
         conversation = load_conversation(session_id)
 
         # Call the LLM for response
-        assistant_response = call_llm(conversation, request.message)
+        assistant_response = call_llm(conversation, request.message, session_id)
 
         # Update conversation history
         conversation.append(
@@ -240,6 +240,54 @@ async def chat(request: ChatRequest):
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/telegram-webhook")
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),
+):
+    """Ahmed replies on Telegram to an unanswered question -> the twin learns the answer"""
+    # Telegram sends back the secret we registered with setWebhook - reject everyone else
+    expected_secret = get_secret("TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_SECRET_PARAM")
+    if not expected_secret or not hmac.compare_digest(
+        (x_telegram_bot_api_secret_token or "").encode(), expected_secret.encode()
+    ):
+        print("Telegram webhook rejected: missing or wrong secret token")
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # From here on always return 200, otherwise Telegram keeps retrying the same update
+    try:
+        update = await request.json()
+        message = update.get("message") or {}
+
+        # Only Ahmed's own chat can teach the twin
+        if str(message.get("chat", {}).get("id")) != str(get_telegram_chat_id()):
+            print("Telegram webhook: message from another chat ignored")
+            return {"ok": True}
+
+        reply_to = message.get("reply_to_message") or {}
+        answer = (message.get("text") or "").strip()
+        if not reply_to.get("message_id") or not answer:
+            print("Telegram webhook: not a text reply, ignored")
+            return {"ok": True}
+
+        pending = pop_pending(reply_to["message_id"])
+        if pending is None:
+            send_telegram(
+                "⚠️ I couldn't match this to a pending question. Reply directly to a 🚨 message.",
+                reply_to_message_id=message.get("message_id"),
+            )
+            return {"ok": True}
+
+        add_qa(pending["question"], answer)
+        send_telegram("✅ Saved. Your twin now knows this.", reply_to_message_id=message.get("message_id"))
+        print(f"Telegram webhook: saved answer for: {pending['question'][:60]}")
+    except Exception:
+        print("Error handling Telegram webhook:")
+        traceback.print_exc()
+
+    return {"ok": True}
 
 
 @app.get("/conversation/{session_id}")
