@@ -16,10 +16,16 @@ variable "environment" {
   }
 }
 
-variable "bedrock_model_id" {
-  description = "Bedrock model ID"
+variable "openrouter_model" {
+  description = "OpenRouter model ID"
   type        = string
-  default     = "openai.gpt-oss-120b-1:0"
+  default     = "openai/gpt-5-mini"
+}
+
+variable "openrouter_reasoning_effort" {
+  description = "Reasoning effort for the model (minimal, low, medium, high)"
+  type        = string
+  default     = "low"
 }
 
 variable "lambda_timeout" {

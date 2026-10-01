@@ -1,6 +1,9 @@
 # Data source to get current AWS account ID
 data "aws_caller_identity" "current" {}
 
+# Data source to get current AWS region
+data "aws_region" "current" {}
+
 locals {
   aliases = var.use_custom_domain && var.root_domain != "" ? [
     var.root_domain,
@@ -8,6 +11,10 @@ locals {
   ] : []
 
   name_prefix = "${var.project_name}-${var.environment}"
+
+  # SSM parameter holding the OpenRouter API key - created by hand, not by Terraform,
+  # so the key never ends up in the Terraform state
+  openrouter_key_param = "/${var.project_name}/${var.environment}/openrouter_api_key"
 
   common_tags = {
     Project     = var.project_name
@@ -109,9 +116,21 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_bedrock" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess"
-  role       = aws_iam_role.lambda_role.name
+# Allow the Lambda to read only the OpenRouter API key parameter
+resource "aws_iam_role_policy" "lambda_ssm_openrouter_key" {
+  name = "${local.name_prefix}-read-openrouter-key"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.openrouter_key_param}"
+      }
+    ]
+  })
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_s3" {
@@ -133,10 +152,12 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      CORS_ORIGINS     = var.use_custom_domain ? "https://${var.root_domain},https://www.${var.root_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}"
-      S3_BUCKET        = aws_s3_bucket.memory.id
-      USE_S3           = "true"
-      BEDROCK_MODEL_ID = var.bedrock_model_id
+      CORS_ORIGINS                = var.use_custom_domain ? "https://${var.root_domain},https://www.${var.root_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}"
+      S3_BUCKET                   = aws_s3_bucket.memory.id
+      USE_S3                      = "true"
+      OPENROUTER_MODEL            = var.openrouter_model
+      OPENROUTER_REASONING_EFFORT = var.openrouter_reasoning_effort
+      OPENROUTER_API_KEY_PARAM    = local.openrouter_key_param
     }
   }
 

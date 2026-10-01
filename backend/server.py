@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
+from openai import OpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from context import prompt
 
 # Load environment variables
@@ -26,14 +27,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Bedrock client - see Q42 on https://edwarddonner.com/faq if the Region gives you problems
-bedrock_client = boto3.client(
-    service_name="bedrock-runtime", 
-    region_name=os.getenv("DEFAULT_AWS_REGION", "eu-north-1")
-)
+# OpenRouter configuration
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-5-mini")
+REASONING_EFFORT = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
+# On Lambda the API key is read from SSM Parameter Store (only the parameter name is in the environment).
+# Locally, OPENROUTER_API_KEY from .env takes priority.
+OPENROUTER_API_KEY_PARAM = os.getenv("OPENROUTER_API_KEY_PARAM", "")
 
-# Bedrock model selection - see Q42 on https://edwarddonner.com/faq for more
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.amazon.nova-2-lite-v1:0")
+# Created on first use and reused while the Lambda container stays warm
+_llm_client: Optional[OpenAI] = None
 
 # Memory storage configuration
 USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
@@ -103,78 +106,103 @@ def save_conversation(session_id: str, messages: List[Dict]):
             json.dump(messages, f, indent=2)
 
 
-def call_bedrock(conversation: List[Dict], user_message: str) -> str:
-    """Call AWS Bedrock with conversation history"""
-    
-    # Build messages in Bedrock format
-    messages = []
-    
-    # Add system prompt as first user message
-    # Or there's a better way to do this - pass in system=[{"text": prompt()}] to the converse call below
-    messages.append({
-        "role": "user", 
-        "content": [{"text": f"System: {prompt()}"}]
-    })
-    
+def get_openrouter_api_key() -> Optional[str]:
+    """Get the OpenRouter API key from the local environment, or from SSM Parameter Store on Lambda"""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if api_key:
+        return api_key
+
+    if OPENROUTER_API_KEY_PARAM:
+        try:
+            ssm_client = boto3.client("ssm")
+            response = ssm_client.get_parameter(Name=OPENROUTER_API_KEY_PARAM, WithDecryption=True)
+            return response["Parameter"]["Value"]
+        except ClientError as e:
+            # Log only the error code - never the parameter value
+            print(f"Could not read SSM parameter {OPENROUTER_API_KEY_PARAM}: {e.response['Error']['Code']}")
+            return None
+
+    return None
+
+
+def get_llm_client() -> OpenAI:
+    """Create the OpenRouter client on first use and reuse it afterwards"""
+    global _llm_client
+    if _llm_client is None:
+        api_key = get_openrouter_api_key()
+        if not api_key:
+            print("OpenRouter API key not configured: set OPENROUTER_API_KEY or OPENROUTER_API_KEY_PARAM")
+            raise HTTPException(status_code=500, detail="AI service not configured")
+        _llm_client = OpenAI(
+            base_url=OPENROUTER_BASE_URL,
+            api_key=api_key,
+            timeout=25,  # API Gateway gives up after ~30 seconds
+            max_retries=1,
+        )
+    return _llm_client
+
+
+def call_llm(conversation: List[Dict], user_message: str) -> str:
+    """Call the LLM through OpenRouter with conversation history"""
+
+    # System prompt first
+    messages = [{"role": "system", "content": prompt()}]
+
     # Add conversation history (limit to last 25 exchanges)
     for msg in conversation[-50:]:
-        messages.append({
-            "role": msg["role"],
-            "content": [{"text": msg["content"]}]
-        })
-    
+        messages.append({"role": msg["role"], "content": msg["content"]})
+
     # Add current user message
-    messages.append({
-        "role": "user",
-        "content": [{"text": user_message}]
-    })
-    
+    messages.append({"role": "user", "content": user_message})
+
     try:
-        # Call Bedrock using the converse API
-        response = bedrock_client.converse(
-            modelId=BEDROCK_MODEL_ID,
+        # GPT-5 mini is a reasoning model: it doesn't accept temperature/top_p
+        response = get_llm_client().chat.completions.create(
+            model=OPENROUTER_MODEL,
             messages=messages,
-            inferenceConfig={
-                "maxTokens": 4000,
-                "temperature": 0.7,
-                "topP": 0.9
-            }
+            max_tokens=4000,
+            extra_body={"reasoning": {"effort": REASONING_EFFORT}},
         )
-        
-        # Extract the response text (reasoning models may return a reasoningContent block first)
-        content = response["output"]["message"]["content"]
-        return next(block["text"] for block in content if "text" in block)
-        
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'ValidationException':
-            # Handle message format issues
-            print(f"Bedrock validation error: {e}")
-            raise HTTPException(status_code=400, detail="Invalid message format for Bedrock")
-        elif error_code == 'AccessDeniedException':
-            print(f"Bedrock access denied: {e}")
-            raise HTTPException(status_code=403, detail="Access denied to Bedrock model")
-        else:
-            print(f"Bedrock error: {e}")
-            raise HTTPException(status_code=500, detail=f"Bedrock error: {str(e)}")
+    except APITimeoutError as e:
+        print(f"OpenRouter timeout: {e}")
+        raise HTTPException(status_code=504, detail="The AI took too long to respond, please try again")
+    except APIConnectionError as e:
+        print(f"OpenRouter connection error: {e}")
+        raise HTTPException(status_code=504, detail="Could not reach the AI service, please try again")
+    except APIStatusError as e:
+        print(f"OpenRouter error {e.status_code}: {e}")
+        if e.status_code == 401:
+            raise HTTPException(status_code=500, detail="AI service authentication failed")
+        if e.status_code == 402:
+            raise HTTPException(status_code=503, detail="AI credits exhausted or key limit reached")
+        if e.status_code == 429:
+            raise HTTPException(status_code=429, detail="Too many requests, please try again shortly")
+        raise HTTPException(status_code=502, detail="AI service error")
+
+    content = response.choices[0].message.content
+    if not content:
+        # e.g. the whole token budget was spent on reasoning
+        print(f"OpenRouter returned an empty response: finish_reason={response.choices[0].finish_reason}")
+        raise HTTPException(status_code=502, detail="The AI returned an empty response, please try again")
+    return content
 
 
 @app.get("/")
 async def root():
     return {
-        "message": "AI Digital Twin API (Powered by AWS Bedrock)",
+        "message": "AI Digital Twin API (Powered by OpenRouter)",
         "memory_enabled": True,
         "storage": "S3" if USE_S3 else "local",
-        "ai_model": BEDROCK_MODEL_ID
+        "ai_model": OPENROUTER_MODEL
     }
 
 
 @app.get("/health")
 async def health_check():
     return {
-        "status": "healthy", 
+        "status": "healthy",
         "use_s3": USE_S3,
-        "bedrock_model": BEDROCK_MODEL_ID
+        "ai_model": OPENROUTER_MODEL
     }
 
 
@@ -187,8 +215,8 @@ async def chat(request: ChatRequest):
         # Load conversation history
         conversation = load_conversation(session_id)
 
-        # Call Bedrock for response
-        assistant_response = call_bedrock(conversation, request.message)
+        # Call the LLM for response
+        assistant_response = call_llm(conversation, request.message)
 
         # Update conversation history
         conversation.append(
