@@ -6,6 +6,8 @@ The whole stack runs on AWS, is defined in Terraform, and is deployed through Gi
 
 ---
 
+<video src="https://github.com/user-attachments/assets/0e68bb76-9ed2-4869-aba9-b939ba9e5e80" controls width="100%"></video>
+
 ## Table of Contents
 
 - [Features](#features)
