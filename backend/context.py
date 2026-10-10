@@ -1,7 +1,7 @@
-from resources import linkedin, summary, facts, style, resume
 from datetime import datetime
-from knowledge import list_qa
 
+from knowledge import list_qa
+from resources import facts, linkedin, resume, style, summary
 
 full_name = facts["full_name"]
 name = facts["name"]

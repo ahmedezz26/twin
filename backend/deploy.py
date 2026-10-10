@@ -1,7 +1,7 @@
 import os
 import shutil
-import zipfile
 import subprocess
+import zipfile
 
 
 def main():

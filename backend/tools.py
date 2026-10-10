@@ -4,7 +4,6 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional
 
 import boto3
 import dns.exception
@@ -39,11 +38,11 @@ def _truncate(text: str) -> str:
     return text if len(text) <= MAX_FIELD_LENGTH else text[:MAX_FIELD_LENGTH] + "…"
 
 
-def get_telegram_chat_id() -> Optional[str]:
+def get_telegram_chat_id() -> str | None:
     return get_secret("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID_PARAM")
 
 
-def send_telegram(text: str, reply_to_message_id: Optional[int] = None) -> Optional[int]:
+def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | None:
     """Send a plain-text Telegram message to Ahmed. Returns the message id, or None on failure"""
     token = get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM")
     chat_id = get_telegram_chat_id()
@@ -116,7 +115,7 @@ def _save_notification_count(session_id: str, count: int):
             f.write(body)
 
 
-def _notify(session_id: str, text: str) -> Optional[int]:
+def _notify(session_id: str, text: str) -> int | None:
     """Send a notification unless this conversation already used its quota"""
     count = _get_notification_count(session_id)
     if count >= MAX_NOTIFICATIONS_PER_SESSION:
@@ -244,7 +243,7 @@ tool_map = {
 }
 
 
-def handle_tool_calls(tool_calls, session_id: str) -> List[Dict]:
+def handle_tool_calls(tool_calls, session_id: str) -> list[dict]:
     """Run the tools the model asked for and return their results as tool messages"""
     results = []
     for tool_call in tool_calls:

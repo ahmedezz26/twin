@@ -1,14 +1,13 @@
 import os
-from typing import Dict, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
 # Values read from SSM, reused while the Lambda container stays warm
-_cache: Dict[str, str] = {}
+_cache: dict[str, str] = {}
 
 
-def get_secret(local_env_name: str, param_env_name: str) -> Optional[str]:
+def get_secret(local_env_name: str, param_env_name: str) -> str | None:
     """Get a secret from the local environment (.env), or from SSM Parameter Store on Lambda.
 
     On Lambda only the parameter NAME is in the environment (param_env_name),
