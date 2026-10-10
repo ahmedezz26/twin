@@ -33,8 +33,8 @@ extend-select = ["B", "S", "DTZ", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # Build script: runs a fixed docker command we control, not user input
 "deploy.py" = ["S603", "S607"]
-# Tests: assert is how pytest checks results (S101 warns about assert in production code)
-"tests/*" = ["S101"]
+# Tests: assert is how pytest checks results (S101), and test secrets are fake (S105, S106)
+"tests/*" = ["S101", "S105", "S106"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
