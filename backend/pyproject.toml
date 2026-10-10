@@ -40,3 +40,12 @@ extend-select = ["B", "S", "DTZ", "SIM"]
 testpaths = ["tests"]
 # The backend is flat modules (server.py, tools.py...), not a package: let tests import them directly
 pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["."]
+# Measure the app, not the tests themselves
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

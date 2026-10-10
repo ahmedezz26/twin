@@ -163,3 +163,25 @@ def test_bad_tool_arguments_return_an_error_instead_of_crashing(arguments, teleg
 
     assert json.loads(message["content"])["status"] == "error"
     assert telegram == []
+
+
+# --- Notification counter in S3 mode (what production uses), with moto ------------------
+
+
+def test_notification_limit_is_stored_in_s3_in_production(telegram, monkeypatch):
+    import boto3
+    from moto import mock_aws
+
+    with mock_aws():
+        s3 = boto3.client("s3", region_name="eu-north-1")
+        s3.create_bucket(Bucket="twin-memory-test", CreateBucketConfiguration={"LocationConstraint": "eu-north-1"})
+        monkeypatch.setenv("USE_S3", "true")
+        monkeypatch.setenv("S3_BUCKET", "twin-memory-test")
+
+        for i in range(tools.MAX_NOTIFICATIONS_PER_SESSION):
+            assert tools.record_unknown_question("session-1", f"question {i}")["status"] == "success"
+        result = tools.record_unknown_question("session-1", "one too many")
+
+        assert result["status"] == "error"
+        stored = json.loads(s3.get_object(Bucket="twin-memory-test", Key="limits/session-1.json")["Body"].read())
+        assert stored == {"count": tools.MAX_NOTIFICATIONS_PER_SESSION}
