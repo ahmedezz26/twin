@@ -7,27 +7,23 @@ from datetime import UTC, datetime
 
 import boto3
 from botocore.exceptions import ClientError
-from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 from pydantic import BaseModel
 
+from config import get_settings
 from context import prompt
 from knowledge import add_qa, pop_pending
 from ssm_secrets import get_secret
 from tools import get_telegram_chat_id, handle_tool_calls, send_telegram, tools
 
-# Load environment variables
-load_dotenv()
-
 app = FastAPI()
 
 # Configure CORS
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=get_settings().cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -35,22 +31,21 @@ app.add_middleware(
 
 # OpenRouter configuration
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-5-mini")
-REASONING_EFFORT = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
 # Tool-calling rounds per message before the model must answer without tools
 MAX_TOOL_ROUNDS = 3
 
 # Created on first use and reused while the Lambda container stays warm
 _llm_client: OpenAI | None = None
 
-# Memory storage configuration
-USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
-S3_BUCKET = os.getenv("S3_BUCKET", "")
-MEMORY_DIR = os.getenv("MEMORY_DIR", "../memory")
+# Created on first use (only on Lambda, where conversations are stored in S3)
+_s3_client = None
 
-# Initialize S3 client if needed
-if USE_S3:
-    s3_client = boto3.client("s3")
+
+def _s3():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
 
 
 # Request/Response models
@@ -77,9 +72,10 @@ def get_memory_path(session_id: str) -> str:
 
 def load_conversation(session_id: str) -> list[dict]:
     """Load conversation history from storage"""
-    if USE_S3:
+    settings = get_settings()
+    if settings.use_s3:
         try:
-            response = s3_client.get_object(Bucket=S3_BUCKET, Key=get_memory_path(session_id))
+            response = _s3().get_object(Bucket=settings.s3_bucket, Key=get_memory_path(session_id))
             return json.loads(response["Body"].read().decode("utf-8"))
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
@@ -87,7 +83,7 @@ def load_conversation(session_id: str) -> list[dict]:
             raise
     else:
         # Local file storage
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
+        file_path = os.path.join(settings.memory_dir, get_memory_path(session_id))
         if os.path.exists(file_path):
             with open(file_path, "r") as f:
                 return json.load(f)
@@ -96,17 +92,18 @@ def load_conversation(session_id: str) -> list[dict]:
 
 def save_conversation(session_id: str, messages: list[dict]):
     """Save conversation history to storage"""
-    if USE_S3:
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
+    settings = get_settings()
+    if settings.use_s3:
+        _s3().put_object(
+            Bucket=settings.s3_bucket,
             Key=get_memory_path(session_id),
             Body=json.dumps(messages, indent=2),
             ContentType="application/json",
         )
     else:
         # Local file storage
-        os.makedirs(MEMORY_DIR, exist_ok=True)
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
+        os.makedirs(settings.memory_dir, exist_ok=True)
+        file_path = os.path.join(settings.memory_dir, get_memory_path(session_id))
         with open(file_path, "w") as f:
             json.dump(messages, f, indent=2)
 
@@ -115,7 +112,7 @@ def get_llm_client() -> OpenAI:
     """Create the OpenRouter client on first use and reuse it afterwards"""
     global _llm_client
     if _llm_client is None:
-        api_key = get_secret("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_PARAM")
+        api_key = get_secret("openrouter_api_key")
         if not api_key:
             print("OpenRouter API key not configured: set OPENROUTER_API_KEY or OPENROUTER_API_KEY_PARAM")
             raise HTTPException(status_code=500, detail="AI service not configured")
@@ -130,15 +127,16 @@ def get_llm_client() -> OpenAI:
 
 def complete(messages: list[dict], tool_choice: str = "auto"):
     """One OpenRouter call, with errors mapped to safe HTTP responses"""
+    settings = get_settings()
     try:
         # GPT-5 mini is a reasoning model: it doesn't accept temperature/top_p
         return get_llm_client().chat.completions.create(
-            model=OPENROUTER_MODEL,
+            model=settings.openrouter_model,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
             max_tokens=4000,
-            extra_body={"reasoning": {"effort": REASONING_EFFORT}},
+            extra_body={"reasoning": {"effort": settings.openrouter_reasoning_effort}},
         )
     except APITimeoutError as e:
         print(f"OpenRouter timeout: {e}")
@@ -193,14 +191,15 @@ async def root():
     return {
         "message": "AI Digital Twin API (Powered by OpenRouter)",
         "memory_enabled": True,
-        "storage": "S3" if USE_S3 else "local",
-        "ai_model": OPENROUTER_MODEL,
+        "storage": "S3" if get_settings().use_s3 else "local",
+        "ai_model": get_settings().openrouter_model,
     }
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "use_s3": USE_S3, "ai_model": OPENROUTER_MODEL}
+    settings = get_settings()
+    return {"status": "healthy", "use_s3": settings.use_s3, "ai_model": settings.openrouter_model}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -244,7 +243,7 @@ async def telegram_webhook(
 ):
     """Ahmed replies on Telegram to an unanswered question -> the twin learns the answer"""
     # Telegram sends back the secret we registered with setWebhook - reject everyone else
-    expected_secret = get_secret("TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_SECRET_PARAM")
+    expected_secret = get_secret("telegram_webhook_secret")
     if not expected_secret or not hmac.compare_digest(
         (x_telegram_bot_api_secret_token or "").encode(), expected_secret.encode()
     ):

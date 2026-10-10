@@ -33,9 +33,9 @@ class FakeResponse:
 
 
 @pytest.fixture
-def configured(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+def configured(settings):
+    settings.telegram_bot_token = TOKEN
+    settings.telegram_chat_id = "12345"
 
 
 @pytest.fixture

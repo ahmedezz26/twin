@@ -73,10 +73,7 @@ def llm(monkeypatch):
 
 
 @pytest.fixture
-def client(monkeypatch, tmp_path):
-    # server.py reads these once at import time, so patch the module values directly
-    monkeypatch.setattr(server, "USE_S3", False)
-    monkeypatch.setattr(server, "MEMORY_DIR", str(tmp_path / "memory"))
+def client():
     return TestClient(server.app)
 
 
@@ -186,9 +183,9 @@ def test_openrouter_unreachable_gives_504(client, llm):
 
 
 @pytest.fixture
-def webhook_configured(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", WEBHOOK_SECRET)
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", AHMED_CHAT_ID)
+def webhook_configured(settings):
+    settings.telegram_webhook_secret = WEBHOOK_SECRET
+    settings.telegram_chat_id = AHMED_CHAT_ID
 
 
 def telegram_reply(text, reply_to_message_id, chat_id=AHMED_CHAT_ID):
@@ -248,16 +245,15 @@ def test_webhook_ignores_other_chats(client, webhook_configured, telegram):
 # --- Production paths: S3 conversation memory and OpenRouter key -------------------
 
 
-def test_conversation_is_saved_to_and_loaded_from_s3(client, llm, monkeypatch):
+def test_conversation_is_saved_to_and_loaded_from_s3(client, llm, settings):
     import boto3
     from moto import mock_aws
 
     with mock_aws():
         s3 = boto3.client("s3", region_name="eu-north-1")
         s3.create_bucket(Bucket="twin-memory-test", CreateBucketConfiguration={"LocationConstraint": "eu-north-1"})
-        monkeypatch.setattr(server, "USE_S3", True)
-        monkeypatch.setattr(server, "S3_BUCKET", "twin-memory-test")
-        monkeypatch.setattr(server, "s3_client", s3, raising=False)  # only created at import when USE_S3 was true
+        settings.s3_bucket = "twin-memory-test"
+        settings.use_s3 = True
         llm.answers = [text_answer("I work at Valeo."), text_answer("On ACC.")]
 
         first = client.post("/chat", json={"message": "Where do you work?"}).json()
@@ -267,9 +263,7 @@ def test_conversation_is_saved_to_and_loaded_from_s3(client, llm, monkeypatch):
         assert [m["content"] for m in saved] == ["Where do you work?", "I work at Valeo.", "On what?", "On ACC."]
 
 
-def test_missing_openrouter_key_gives_500(client, monkeypatch):
-    monkeypatch.setattr(server, "_llm_client", None)  # no client cached from an earlier test
-
+def test_missing_openrouter_key_gives_500(client):
     response = client.post("/chat", json={"message": "Hello"})
 
     assert response.status_code == 500
