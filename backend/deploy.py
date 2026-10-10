@@ -16,7 +16,7 @@ APP_FILES = [
 ]
 
 
-def main():
+def main() -> None:
     print("Creating Lambda deployment package...")
 
     # Clean up

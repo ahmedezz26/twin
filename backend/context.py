@@ -24,7 +24,7 @@ If a visitor asks something similar, use these answers confidently instead of sa
 """
 
 
-def prompt():
+def prompt() -> str:
     return f"""
 # Your Role
 

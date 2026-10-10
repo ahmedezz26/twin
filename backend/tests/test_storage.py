@@ -4,6 +4,7 @@ Local mode uses the temporary folder from conftest.py. S3 and SSM use moto, a fa
 """
 
 from types import SimpleNamespace
+from typing import Final
 
 import boto3
 import pytest
@@ -12,7 +13,7 @@ from moto import mock_aws
 import knowledge
 import ssm_secrets
 
-REGION = "eu-north-1"
+REGION: Final = "eu-north-1"
 
 
 @pytest.fixture
@@ -52,6 +53,7 @@ def test_pending_question_can_be_popped_once():
     first = knowledge.pop_pending(42)
     second = knowledge.pop_pending(42)
 
+    assert first is not None
     assert first["question"] == "What was your first car?"
     assert second is None  # popping removes it, so a second reply can't save the answer twice
 
@@ -103,7 +105,9 @@ def test_add_qa_makes_the_new_answer_visible_immediately(clock):
 def test_s3_pending_question_round_trip(knowledge_bucket):
     knowledge.save_pending(42, "What was your first car?", "session-1")
 
-    assert knowledge.pop_pending(42)["question"] == "What was your first car?"
+    pending = knowledge.pop_pending(42)
+    assert pending is not None
+    assert pending["question"] == "What was your first car?"
     assert knowledge.pop_pending(42) is None
 
 

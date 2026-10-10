@@ -7,6 +7,7 @@ import io
 import json
 import urllib.error
 import urllib.request
+from email.message import Message
 from types import SimpleNamespace
 
 import pytest
@@ -56,7 +57,7 @@ def telegram_api(monkeypatch):
 
 def http_error(code, body):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    return urllib.error.HTTPError(url, code, "error", {}, io.BytesIO(body))
+    return urllib.error.HTTPError(url, code, "error", Message(), io.BytesIO(body))
 
 
 def test_not_configured_sends_nothing(telegram_api):

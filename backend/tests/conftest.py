@@ -7,6 +7,7 @@ Safety rules for the whole suite:
 """
 
 import socket
+from typing import Any
 
 import pytest
 
@@ -14,7 +15,7 @@ import config
 
 # Must happen before any test imports server.py (it reads the settings at import, for CORS):
 # settings built here never read the real .env, and secrets are explicitly empty
-SAFE_DEFAULTS = {
+SAFE_DEFAULTS: dict[str, Any] = {
     "_env_file": None,
     "use_s3": False,
     "s3_bucket": "",

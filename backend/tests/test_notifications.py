@@ -4,9 +4,9 @@ Telegram is replaced by a fake that records what *would* have been sent.
 """
 
 import json
-from types import SimpleNamespace
 
 import pytest
+from openai.types.chat import ChatCompletionMessageFunctionToolCall, ChatCompletionToolMessageParam
 
 import knowledge
 import tools
@@ -48,6 +48,7 @@ def test_unknown_question_notifies_and_saves_pending(telegram):
     assert "What was your first car?" in telegram[0]
     # The reply to Telegram message 1001 must be matchable to this question later
     pending = knowledge.pop_pending(1001)
+    assert pending is not None
     assert pending["question"] == "What was your first car?"
     assert pending["session_id"] == "session-1"
 
@@ -133,8 +134,18 @@ def test_both_tools_share_the_same_limit(telegram, any_domain_accepts_mail):
 
 
 def fake_tool_call(name, arguments, call_id="call-1"):
-    """Looks like one tool call from the OpenAI SDK: only .id and .function.name/.arguments are used."""
-    return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=arguments))
+    """A tool call exactly as the OpenAI SDK returns it (the real type, so the fake can't drift from it)."""
+    return ChatCompletionMessageFunctionToolCall.model_validate(
+        {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+    )
+
+
+def result_of(message: ChatCompletionToolMessageParam) -> dict[str, str]:
+    """The tool result inside a tool message (handle_tool_calls always puts a JSON string there)."""
+    content = message["content"]
+    assert isinstance(content, str)
+    result: dict[str, str] = json.loads(content)
+    return result
 
 
 def test_tool_call_runs_the_tool_and_returns_a_tool_message(telegram):
@@ -144,13 +155,13 @@ def test_tool_call_runs_the_tool_and_returns_a_tool_message(telegram):
 
     assert message["role"] == "tool"
     assert message["tool_call_id"] == "call-1"
-    assert json.loads(message["content"]) == {"status": "success"}
+    assert result_of(message) == {"status": "success"}
 
 
 def test_unknown_tool_returns_an_error_instead_of_crashing():
     [message] = tools.handle_tool_calls([fake_tool_call("delete_everything", "{}")], "session-1")
 
-    assert json.loads(message["content"])["status"] == "error"
+    assert result_of(message)["status"] == "error"
 
 
 @pytest.mark.parametrize(
@@ -161,7 +172,7 @@ def test_unknown_tool_returns_an_error_instead_of_crashing():
 def test_bad_tool_arguments_return_an_error_instead_of_crashing(arguments, telegram):
     [message] = tools.handle_tool_calls([fake_tool_call("record_unknown_question", arguments)], "session-1")
 
-    assert json.loads(message["content"])["status"] == "error"
+    assert result_of(message)["status"] == "error"
     assert telegram == []
 
 
@@ -185,3 +196,24 @@ def test_notification_limit_is_stored_in_s3_in_production(telegram, settings):
         assert result["status"] == "error"
         stored = json.loads(s3.get_object(Bucket="twin-memory-test", Key="limits/session-1.json")["Body"].read())
         assert stored == {"count": tools.MAX_NOTIFICATIONS_PER_SESSION}
+
+
+def test_custom_tool_call_returns_an_error_instead_of_crashing(telegram):
+    # Found by mypy: a "custom" tool call has no .function, so the old code would raise AttributeError (a 500)
+    from openai.types.chat import ChatCompletionMessageCustomToolCall
+
+    call = ChatCompletionMessageCustomToolCall.model_validate(
+        {"id": "call-1", "type": "custom", "custom": {"name": "record_unknown_question", "input": "hi"}}
+    )
+
+    [message] = tools.handle_tool_calls([call], "session-1")
+
+    assert result_of(message)["status"] == "error"
+    assert telegram == []
+
+
+def test_null_arguments_from_the_model_are_handled(telegram, any_domain_accepts_mail):
+    # Found by mypy: the model sends JSON, so "required" arguments can still arrive as null
+    assert tools.record_user_details("session-1", email=None)["status"] == "error"
+    assert tools.record_unknown_question("session-1", question=None)["status"] == "error"
+    assert telegram == []

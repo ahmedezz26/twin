@@ -5,15 +5,29 @@ import os
 import re
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import boto3
 import dns.exception
 import dns.resolver
 from botocore.exceptions import ClientError
+from openai.types.chat import (
+    ChatCompletionFunctionToolParam,
+    ChatCompletionMessageToolCallUnion,
+    ChatCompletionToolMessageParam,
+)
+from openai.types.shared_params import FunctionDefinition
 
 from config import get_settings
 from knowledge import save_pending
 from ssm_secrets import get_secret
+
+if TYPE_CHECKING:  # type stubs are a dev dependency: never imported at runtime (not on Lambda)
+    from types_boto3_s3 import S3Client
+
+# What every tool returns to the model, e.g. {"status": "success"}
+ToolResult = dict[str, str]
 
 # Protects Ahmed's Telegram from being spammed through the twin
 MAX_NOTIFICATIONS_PER_SESSION = 3
@@ -25,17 +39,17 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Seconds allowed for the DNS lookup of an email domain
 DNS_LOOKUP_SECONDS = 3
 
-_s3_client = None
+_s3_client: "S3Client | None" = None
 
 
-def _s3():
+def _s3() -> "S3Client":
     global _s3_client
     if _s3_client is None:
         _s3_client = boto3.client("s3")
     return _s3_client
 
 
-def _truncate(text: str) -> str:
+def _truncate(text: str | None) -> str:
     text = (text or "").strip()
     return text if len(text) <= MAX_FIELD_LENGTH else text[:MAX_FIELD_LENGTH] + "…"
 
@@ -52,7 +66,10 @@ def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | No
         print("Telegram not configured: missing bot token or chat id")
         return None
 
-    payload = {"chat_id": chat_id, "text": text}  # no parse_mode, so visitor text can't inject formatting
+    payload: dict[str, object] = {
+        "chat_id": chat_id,
+        "text": text,
+    }  # no parse_mode, so visitor text can't inject formatting
     if reply_to_message_id:
         # Still send if the original message was deleted
         payload["reply_parameters"] = {"message_id": reply_to_message_id, "allow_sending_without_reply": True}
@@ -64,7 +81,7 @@ def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | No
     )
     try:
         with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - fixed https:// Telegram URL
-            data = json.loads(response.read())
+            data: dict[str, Any] = json.loads(response.read())
     except urllib.error.HTTPError as e:
         # Telegram explains errors in the response body (never log the URL - it contains the token)
         try:
@@ -79,7 +96,8 @@ def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | No
     if not data.get("ok"):
         print(f"Telegram error: {data.get('description')}")
         return None
-    return data["result"]["message_id"]
+    message_id: int = data["result"]["message_id"]
+    return message_id
 
 
 # Per-session notification counter, stored next to the conversation memory
@@ -92,7 +110,8 @@ def _get_notification_count(session_id: str) -> int:
     if settings.use_s3:
         try:
             response = _s3().get_object(Bucket=settings.s3_bucket, Key=_limit_key(session_id))
-            return json.loads(response["Body"].read())["count"]
+            count: int = json.loads(response["Body"].read())["count"]
+            return count
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return 0
@@ -102,10 +121,11 @@ def _get_notification_count(session_id: str) -> int:
     if not os.path.exists(path):
         return 0
     with open(path, "r") as f:
-        return json.load(f)["count"]
+        stored_count: int = json.load(f)["count"]
+        return stored_count
 
 
-def _save_notification_count(session_id: str, count: int):
+def _save_notification_count(session_id: str, count: int) -> None:
     body = json.dumps({"count": count})
     settings = get_settings()
     if settings.use_s3:
@@ -159,7 +179,10 @@ def email_domain_accepts_mail(domain: str) -> bool:
         return True
 
 
-def record_user_details(session_id: str, email: str, name: str = "Name not provided", notes: str = "not provided"):
+# The model sends JSON, so any argument can arrive as null (None), even "required" ones
+def record_user_details(
+    session_id: str, email: str | None, name: str | None = "Name not provided", notes: str | None = "not provided"
+) -> ToolResult:
     email = (email or "").strip()
     if not EMAIL_PATTERN.match(email) or len(email) > 254:
         return {"status": "error", "message": "That email address doesn't look valid. Ask the user to check it."}
@@ -182,7 +205,7 @@ def record_user_details(session_id: str, email: str, name: str = "Name not provi
     return {"status": "success"}
 
 
-def record_unknown_question(session_id: str, question: str):
+def record_unknown_question(session_id: str, question: str | None) -> ToolResult:
     question = _truncate(question)
     if not question:
         return {"status": "error", "message": "No question provided."}
@@ -203,7 +226,7 @@ def record_unknown_question(session_id: str, question: str):
     return {"status": "success"}
 
 
-record_user_details_json = {
+record_user_details_json: FunctionDefinition = {
     "name": "record_user_details",
     "description": "Use this tool to record that a user is interested in being in touch and provided an email address",
     "parameters": {
@@ -221,7 +244,7 @@ record_user_details_json = {
     },
 }
 
-record_unknown_question_json = {
+record_unknown_question_json: FunctionDefinition = {
     "name": "record_unknown_question",
     "description": "Always use this tool to record ONLY professional life/career questions about the person that you couldn't answer because you didn't know the answer",
     "parameters": {
@@ -234,24 +257,32 @@ record_unknown_question_json = {
     },
 }
 
-tools = [
+tools: list[ChatCompletionFunctionToolParam] = [
     {"type": "function", "function": record_user_details_json},
     {"type": "function", "function": record_unknown_question_json},
 ]
 
-tool_map = {
+tool_map: dict[str, Callable[..., ToolResult]] = {
     "record_user_details": record_user_details,
     "record_unknown_question": record_unknown_question,
 }
 
 
-def handle_tool_calls(tool_calls, session_id: str) -> list[dict]:
+def handle_tool_calls(
+    tool_calls: list[ChatCompletionMessageToolCallUnion], session_id: str
+) -> list[ChatCompletionToolMessageParam]:
     """Run the tools the model asked for and return their results as tool messages"""
-    results = []
+    results: list[ChatCompletionToolMessageParam] = []
     for tool_call in tool_calls:
+        if tool_call.type != "function":
+            # Only function tools are offered; a "custom" tool call has no .function and would crash the chat
+            unsupported: ToolResult = {"status": "error", "message": "Only function tools are supported"}
+            results.append({"role": "tool", "content": json.dumps(unsupported), "tool_call_id": tool_call.id})
+            continue
         tool_name = tool_call.function.name
         print(f"Tool called: {tool_name}")
         tool = tool_map.get(tool_name)
+        result: ToolResult
         try:
             arguments = json.loads(tool_call.function.arguments or "{}")
             result = (
