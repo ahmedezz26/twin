@@ -3,7 +3,7 @@ import json
 import os
 import traceback
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import boto3
 from botocore.exceptions import ClientError
@@ -142,19 +142,19 @@ def complete(messages: list[dict], tool_choice: str = "auto"):
         )
     except APITimeoutError as e:
         print(f"OpenRouter timeout: {e}")
-        raise HTTPException(status_code=504, detail="The AI took too long to respond, please try again")
+        raise HTTPException(status_code=504, detail="The AI took too long to respond, please try again") from e
     except APIConnectionError as e:
         print(f"OpenRouter connection error: {e}")
-        raise HTTPException(status_code=504, detail="Could not reach the AI service, please try again")
+        raise HTTPException(status_code=504, detail="Could not reach the AI service, please try again") from e
     except APIStatusError as e:
         print(f"OpenRouter error {e.status_code}: {e}")
         if e.status_code == 401:
-            raise HTTPException(status_code=500, detail="AI service authentication failed")
+            raise HTTPException(status_code=500, detail="AI service authentication failed") from e
         if e.status_code == 402:
-            raise HTTPException(status_code=503, detail="AI credits exhausted or key limit reached")
+            raise HTTPException(status_code=503, detail="AI credits exhausted or key limit reached") from e
         if e.status_code == 429:
-            raise HTTPException(status_code=429, detail="Too many requests, please try again shortly")
-        raise HTTPException(status_code=502, detail="AI service error")
+            raise HTTPException(status_code=429, detail="Too many requests, please try again shortly") from e
+        raise HTTPException(status_code=502, detail="AI service error") from e
 
 
 def call_llm(conversation: list[dict], user_message: str, session_id: str) -> str:
@@ -216,12 +216,12 @@ async def chat(request: ChatRequest):
         assistant_response = call_llm(conversation, request.message, session_id)
 
         # Update conversation history
-        conversation.append({"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()})
+        conversation.append({"role": "user", "content": request.message, "timestamp": datetime.now(UTC).isoformat()})
         conversation.append(
             {
                 "role": "assistant",
                 "content": assistant_response,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
         )
 
@@ -232,9 +232,9 @@ async def chat(request: ChatRequest):
 
     except HTTPException:
         raise
-    except Exception as e:  # noqa: BLE001 - last-resort handler; narrowed (and str(e) leak removed) in Phase 3
+    except Exception as e:
         print(f"Error in chat endpoint: {e!s}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/telegram-webhook")
@@ -291,11 +291,11 @@ async def get_conversation(session_id: str):
     try:
         conversation = load_conversation(session_id)
         return {"session_id": session_id, "messages": conversation}
-    except Exception as e:  # noqa: BLE001 - endpoint is removed or protected in Phase 10
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # noqa: S104 - local dev only; Lambda never runs this block

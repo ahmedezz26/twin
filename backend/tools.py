@@ -62,7 +62,7 @@ def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | No
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - fixed https:// Telegram URL
             data = json.loads(response.read())
     except urllib.error.HTTPError as e:
         # Telegram explains errors in the response body (never log the URL - it contains the token)

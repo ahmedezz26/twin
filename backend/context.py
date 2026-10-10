@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from knowledge import list_qa
 from resources import facts, linkedin, resume, style, summary
@@ -66,7 +66,7 @@ You have two tools that notify {name} directly:
 
 
 For reference, here is the current date and time:
-{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+{datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")} UTC
 
 ## Your task
 

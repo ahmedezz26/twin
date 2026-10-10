@@ -61,7 +61,7 @@ def main():
     # Create zip
     print("Creating zip file...")
     with zipfile.ZipFile("lambda-deployment.zip", "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk("lambda-package"):
+        for root, _dirs, files in os.walk("lambda-package"):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, "lambda-package")
