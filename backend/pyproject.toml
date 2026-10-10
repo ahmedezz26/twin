@@ -16,6 +16,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
+    "moto[s3,ssm]>=5.2.3",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.0",
 ]
 
@@ -29,3 +33,10 @@ extend-select = ["B", "S", "DTZ", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # Build script: runs a fixed docker command we control, not user input
 "deploy.py" = ["S603", "S607"]
+# Tests: assert is how pytest checks results (S101 warns about assert in production code)
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The backend is flat modules (server.py, tools.py...), not a package: let tests import them directly
+pythonpath = ["."]
