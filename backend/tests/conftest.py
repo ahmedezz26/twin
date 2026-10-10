@@ -11,6 +11,10 @@ import socket
 import dotenv
 import pytest
 
+import knowledge
+import ssm_secrets
+import tools
+
 # Must happen before any test imports server.py, whose load_dotenv() would read the real .env
 dotenv.load_dotenv = lambda *args, **kwargs: False
 
@@ -53,6 +57,13 @@ def safe_environment(monkeypatch, tmp_path):
     # Local storage goes to a fresh temporary folder for each test
     monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
     monkeypatch.setenv("KNOWLEDGE_DIR", str(tmp_path / "knowledge"))
+
+    # Module-level caches would leak state from one test into the next: start every test empty
+    monkeypatch.setattr(ssm_secrets, "_cache", {})
+    monkeypatch.setattr(knowledge, "_qa_cache", None)
+    monkeypatch.setattr(knowledge, "_qa_cache_time", 0.0)
+    monkeypatch.setattr(knowledge, "_s3_client", None)
+    monkeypatch.setattr(tools, "_s3_client", None)
 
     # Block real network connections and DNS lookups
     monkeypatch.setattr(socket.socket, "connect", _blocked)
