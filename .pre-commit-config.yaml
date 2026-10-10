@@ -1,0 +1,26 @@
+# Checks that run automatically before every `git commit` (install once with: uv run --project backend pre-commit install).
+# They use the project's own Ruff and mypy from uv.lock, so the versions match the terminal and CI exactly.
+# This is a convenience: CI on the pull request is the real gate (a hook can be skipped with --no-verify).
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --directory backend ruff format
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --directory backend ruff check
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run --directory backend mypy .
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false

@@ -3,13 +3,12 @@
 import urllib.request
 
 import pytest
-from conftest import NetworkBlockedError
 
 import config
 
 
 def test_real_network_is_blocked():
-    with pytest.raises(NetworkBlockedError):
+    with pytest.raises(RuntimeError, match="real network"):
         urllib.request.urlopen("https://api.telegram.org", timeout=1)
 
 

@@ -18,9 +18,12 @@ dependencies = [
 dev = [
     "httpx2>=2.13.1",
     "moto[s3,ssm]>=5.2.3",
+    "mypy>=2.4.0",
+    "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.0",
+    "types-boto3[s3,ssm]>=1.43.111",
 ]
 
 [tool.ruff]
@@ -49,3 +52,23 @@ omit = ["tests/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+# Lets mypy understand Pydantic models and Settings (field types, constructors)
+plugins = ["pydantic.mypy"]
+exclude = ["^\\.venv/", "^lambda-package/"]
+# Name test files tests.test_api etc. (there is no tests/__init__.py), so the override below can match them
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# Tests: test functions and fixtures may skip annotations, but their bodies are still checked
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = true
+
+[tool.pydantic-mypy]
+init_typed = true

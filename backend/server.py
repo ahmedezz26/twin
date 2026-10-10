@@ -4,6 +4,7 @@ import os
 import traceback
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 from uuid import UUID
 
 import boto3
@@ -11,6 +12,7 @@ from botocore.exceptions import ClientError
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+from openai.types.chat import ChatCompletion, ChatCompletionAssistantMessageParam, ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
 from config import get_settings
@@ -18,6 +20,9 @@ from context import prompt
 from knowledge import add_qa, pop_pending
 from ssm_secrets import get_secret
 from tools import get_telegram_chat_id, handle_tool_calls, send_telegram, tools
+
+if TYPE_CHECKING:  # type stubs are a dev dependency: never imported at runtime (not on Lambda)
+    from types_boto3_s3 import S3Client
 
 app = FastAPI()
 
@@ -41,10 +46,10 @@ MAX_MESSAGE_LENGTH = 8000
 _llm_client: OpenAI | None = None
 
 # Created on first use (only on Lambda, where conversations are stored in S3)
-_s3_client = None
+_s3_client: "S3Client | None" = None
 
 
-def _s3():
+def _s3() -> "S3Client":
     global _s3_client
     if _s3_client is None:
         _s3_client = boto3.client("s3")
@@ -63,8 +68,10 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
-class Message(BaseModel):
-    role: str
+class StoredMessage(TypedDict):
+    """One message of a conversation, as saved in memory (local file or S3)."""
+
+    role: Literal["user", "assistant"]
     content: str
     timestamp: str
 
@@ -74,13 +81,13 @@ def get_memory_path(session_id: str) -> str:
     return f"{session_id}.json"
 
 
-def load_conversation(session_id: str) -> list[dict]:
+def load_conversation(session_id: str) -> list[StoredMessage]:
     """Load conversation history from storage"""
     settings = get_settings()
     if settings.use_s3:
         try:
             response = _s3().get_object(Bucket=settings.s3_bucket, Key=get_memory_path(session_id))
-            return json.loads(response["Body"].read().decode("utf-8"))
+            return cast(list[StoredMessage], json.loads(response["Body"].read().decode("utf-8")))
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return []
@@ -90,11 +97,11 @@ def load_conversation(session_id: str) -> list[dict]:
         file_path = os.path.join(settings.memory_dir, get_memory_path(session_id))
         if os.path.exists(file_path):
             with open(file_path, "r") as f:
-                return json.load(f)
+                return cast(list[StoredMessage], json.load(f))
         return []
 
 
-def save_conversation(session_id: str, messages: list[dict]):
+def save_conversation(session_id: str, messages: list[StoredMessage]) -> None:
     """Save conversation history to storage"""
     settings = get_settings()
     if settings.use_s3:
@@ -129,7 +136,9 @@ def get_llm_client() -> OpenAI:
     return _llm_client
 
 
-def complete(messages: list[dict], tool_choice: str = "auto"):
+def complete(
+    messages: list[ChatCompletionMessageParam], tool_choice: Literal["auto", "none"] = "auto"
+) -> ChatCompletion:
     """One OpenRouter call, with errors mapped to safe HTTP responses"""
     settings = get_settings()
     try:
@@ -159,26 +168,31 @@ def complete(messages: list[dict], tool_choice: str = "auto"):
         raise HTTPException(status_code=502, detail="AI service error") from e
 
 
-def call_llm(conversation: list[dict], user_message: str, session_id: str) -> str:
+def call_llm(conversation: list[StoredMessage], user_message: str, session_id: str) -> str:
     """Call the LLM through OpenRouter with conversation history, running any tools it asks for"""
 
     # System prompt first
-    messages = [{"role": "system", "content": prompt()}]
+    messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": prompt()}]
 
     # Add conversation history (limit to last 25 exchanges)
     for msg in conversation[-50:]:
-        messages.append({"role": msg["role"], "content": msg["content"]})
+        if msg["role"] == "user":
+            messages.append({"role": "user", "content": msg["content"]})
+        else:
+            messages.append({"role": "assistant", "content": msg["content"]})
 
     # Add current user message
     messages.append({"role": "user", "content": user_message})
 
     response = complete(messages)
     rounds = 0
-    while response.choices[0].finish_reason == "tool_calls" and response.choices[0].message.tool_calls:
+    # tool_calls is a local variable so mypy knows it is not None inside the loop
+    while response.choices[0].finish_reason == "tool_calls" and (tool_calls := response.choices[0].message.tool_calls):
         rounds += 1
         assistant_message = response.choices[0].message
-        messages.append(assistant_message.model_dump(exclude_none=True))
-        messages.extend(handle_tool_calls(assistant_message.tool_calls, session_id))
+        # The SDK's response object, turned back into the dict shape the next request expects
+        messages.append(cast(ChatCompletionAssistantMessageParam, assistant_message.model_dump(exclude_none=True)))
+        messages.extend(handle_tool_calls(tool_calls, session_id))
         # After MAX_TOOL_ROUNDS the model has to answer without calling more tools
         response = complete(messages, tool_choice="none" if rounds >= MAX_TOOL_ROUNDS else "auto")
 
@@ -191,7 +205,7 @@ def call_llm(conversation: list[dict], user_message: str, session_id: str) -> st
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, object]:
     return {
         "message": "AI Digital Twin API (Powered by OpenRouter)",
         "memory_enabled": True,
@@ -201,13 +215,13 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict[str, object]:
     settings = get_settings()
     return {"status": "healthy", "use_s3": settings.use_s3, "ai_model": settings.openrouter_model}
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest) -> ChatResponse:
     try:
         # Generate session ID if not provided
         session_id = str(request.session_id or uuid.uuid4())
@@ -246,7 +260,7 @@ async def chat(request: ChatRequest):
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
-):
+) -> dict[str, bool]:
     """Ahmed replies on Telegram to an unanswered question -> the twin learns the answer"""
     # Telegram sends back the secret we registered with setWebhook - reject everyone else
     expected_secret = get_secret("telegram_webhook_secret")
@@ -291,7 +305,7 @@ async def telegram_webhook(
 
 
 @app.get("/conversation/{session_id}")
-async def get_conversation(session_id: str):
+async def get_conversation(session_id: str) -> dict[str, object]:
     """Retrieve conversation history"""
     try:
         conversation = load_conversation(session_id)
