@@ -1,6 +1,10 @@
-# Checks that run automatically before every `git commit` (install once with: uv run --project backend pre-commit install).
-# They use the project's own Ruff and mypy from uv.lock, so the versions match the terminal and CI exactly.
+# Checks that run automatically: fast ones before every `git commit`, the tests before every `git push`.
+# Install once per clone with: uv run --project backend pre-commit install
+# They use the project's own Ruff, mypy and pytest from uv.lock, so the versions match the terminal and CI exactly.
 # This is a convenience: CI on the pull request is the real gate (a hook can be skipped with --no-verify).
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
 repos:
   - repo: local
     hooks:
@@ -24,3 +28,12 @@ repos:
         language: system
         files: ^backend/.*\.py$
         pass_filenames: false
+
+      # Tests run before code leaves the laptop, not on every commit: commits stay instant even when tests get slower
+      - id: pytest
+        name: pytest
+        entry: uv run --directory backend pytest -q
+        language: system
+        files: ^backend/
+        pass_filenames: false
+        stages: [pre-push]
