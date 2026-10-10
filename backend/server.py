@@ -4,13 +4,14 @@ import os
 import traceback
 import uuid
 from datetime import UTC, datetime
+from uuid import UUID
 
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import get_settings
 from context import prompt
@@ -33,6 +34,8 @@ app.add_middleware(
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Tool-calling rounds per message before the model must answer without tools
 MAX_TOOL_ROUNDS = 3
+# Longest visitor message accepted: fits a pasted job description (~3-6k characters), blocks abuse
+MAX_MESSAGE_LENGTH = 8000
 
 # Created on first use and reused while the Lambda container stays warm
 _llm_client: OpenAI | None = None
@@ -50,8 +53,9 @@ def _s3():
 
 # Request/Response models
 class ChatRequest(BaseModel):
-    message: str
-    session_id: str | None = None
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
+    # Only ever a UUID the server generated: anything else (e.g. "../x") never reaches a file path or S3 key
+    session_id: UUID | None = None
 
 
 class ChatResponse(BaseModel):
@@ -206,7 +210,7 @@ async def health_check():
 async def chat(request: ChatRequest):
     try:
         # Generate session ID if not provided
-        session_id = request.session_id or str(uuid.uuid4())
+        session_id = str(request.session_id or uuid.uuid4())
 
         # Load conversation history
         conversation = load_conversation(session_id)
@@ -232,8 +236,10 @@ async def chat(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in chat endpoint: {e!s}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        # Full details go to the logs (CloudWatch); the visitor only gets a generic message
+        print("Error in chat endpoint:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Something went wrong, please try again") from e
 
 
 @app.post("/telegram-webhook")

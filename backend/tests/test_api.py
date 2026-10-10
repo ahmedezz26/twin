@@ -268,3 +268,36 @@ def test_missing_openrouter_key_gives_500(client):
 
     assert response.status_code == 500
     assert response.json()["detail"] == "AI service not configured"
+
+
+# --- Input validation and error hygiene (Phase 3 fixes, written test-first) ------------------
+
+
+def test_session_id_that_is_not_a_uuid_is_rejected(client, llm, settings):
+    # "../" in a session id would make the server write outside the memory folder (path traversal)
+    llm.answers = [text_answer("Hi")]
+
+    response = client.post("/chat", json={"message": "Hello", "session_id": "../escaped"})
+
+    assert response.status_code == 422
+    assert not (settings.memory_dir.parent / "escaped.json").exists()
+
+
+def test_very_long_message_is_rejected_before_calling_the_model(client, llm):
+    response = client.post("/chat", json={"message": "x" * (server.MAX_MESSAGE_LENGTH + 1)})
+
+    assert response.status_code == 422
+    assert llm.calls == []  # no OpenRouter money spent
+
+
+def test_unexpected_error_does_not_leak_internal_details(client, monkeypatch):
+    def broken_storage(session_id):
+        raise RuntimeError("internal detail: s3://twin-memory-prod/key")
+
+    monkeypatch.setattr(server, "load_conversation", broken_storage)
+
+    response = client.post("/chat", json={"message": "Hello"})
+
+    assert response.status_code == 500
+    assert "internal detail" not in response.text
+    assert "twin-memory-prod" not in response.text
