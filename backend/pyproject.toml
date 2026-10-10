@@ -13,3 +13,19 @@ dependencies = [
     "python-multipart>=0.0.32",
     "uvicorn>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# On top of Ruff's default rules: bugbear, security, timezone-aware datetimes, simplifications
+extend-select = ["B", "S", "DTZ", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Build script: runs a fixed docker command we control, not user input
+"deploy.py" = ["S603", "S607"]

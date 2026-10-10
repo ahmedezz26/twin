@@ -1,7 +1,7 @@
 import os
 import shutil
-import zipfile
 import subprocess
+import zipfile
 
 
 def main():
@@ -42,10 +42,18 @@ def main():
 
     # Copy application files
     print("Copying application files...")
-    for file in ["server.py", "lambda_handler.py", "context.py", "resources.py", "tools.py", "knowledge.py", "ssm_secrets.py"]:
+    for file in [
+        "server.py",
+        "lambda_handler.py",
+        "context.py",
+        "resources.py",
+        "tools.py",
+        "knowledge.py",
+        "ssm_secrets.py",
+    ]:
         if os.path.exists(file):
             shutil.copy2(file, "lambda-package/")
-    
+
     # Copy data directory
     if os.path.exists("data"):
         shutil.copytree("data", "lambda-package/data")
@@ -53,7 +61,7 @@ def main():
     # Create zip
     print("Creating zip file...")
     with zipfile.ZipFile("lambda-deployment.zip", "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk("lambda-package"):
+        for root, _dirs, files in os.walk("lambda-package"):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, "lambda-package")

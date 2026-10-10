@@ -1,7 +1,7 @@
-from resources import linkedin, summary, facts, style, resume
-from datetime import datetime
-from knowledge import list_qa
+from datetime import UTC, datetime
 
+from knowledge import list_qa
+from resources import facts, linkedin, resume, style, summary
 
 full_name = facts["full_name"]
 name = facts["name"]
@@ -66,7 +66,7 @@ You have two tools that notify {name} directly:
 
 
 For reference, here is the current date and time:
-{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+{datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")} UTC
 
 ## Your task
 

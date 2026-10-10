@@ -1,17 +1,18 @@
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import os
-from dotenv import load_dotenv
-from typing import Optional, List, Dict
 import hmac
 import json
+import os
 import traceback
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
+
 import boto3
 from botocore.exceptions import ClientError
-from openai import OpenAI, APIStatusError, APIConnectionError, APITimeoutError
+from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+from pydantic import BaseModel
+
 from context import prompt
 from knowledge import add_qa, pop_pending
 from ssm_secrets import get_secret
@@ -40,7 +41,7 @@ REASONING_EFFORT = os.getenv("OPENROUTER_REASONING_EFFORT", "low")
 MAX_TOOL_ROUNDS = 3
 
 # Created on first use and reused while the Lambda container stays warm
-_llm_client: Optional[OpenAI] = None
+_llm_client: OpenAI | None = None
 
 # Memory storage configuration
 USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
@@ -55,7 +56,7 @@ if USE_S3:
 # Request/Response models
 class ChatRequest(BaseModel):
     message: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -74,7 +75,7 @@ def get_memory_path(session_id: str) -> str:
     return f"{session_id}.json"
 
 
-def load_conversation(session_id: str) -> List[Dict]:
+def load_conversation(session_id: str) -> list[dict]:
     """Load conversation history from storage"""
     if USE_S3:
         try:
@@ -93,7 +94,7 @@ def load_conversation(session_id: str) -> List[Dict]:
         return []
 
 
-def save_conversation(session_id: str, messages: List[Dict]):
+def save_conversation(session_id: str, messages: list[dict]):
     """Save conversation history to storage"""
     if USE_S3:
         s3_client.put_object(
@@ -127,7 +128,7 @@ def get_llm_client() -> OpenAI:
     return _llm_client
 
 
-def complete(messages: List[Dict], tool_choice: str = "auto"):
+def complete(messages: list[dict], tool_choice: str = "auto"):
     """One OpenRouter call, with errors mapped to safe HTTP responses"""
     try:
         # GPT-5 mini is a reasoning model: it doesn't accept temperature/top_p
@@ -141,22 +142,22 @@ def complete(messages: List[Dict], tool_choice: str = "auto"):
         )
     except APITimeoutError as e:
         print(f"OpenRouter timeout: {e}")
-        raise HTTPException(status_code=504, detail="The AI took too long to respond, please try again")
+        raise HTTPException(status_code=504, detail="The AI took too long to respond, please try again") from e
     except APIConnectionError as e:
         print(f"OpenRouter connection error: {e}")
-        raise HTTPException(status_code=504, detail="Could not reach the AI service, please try again")
+        raise HTTPException(status_code=504, detail="Could not reach the AI service, please try again") from e
     except APIStatusError as e:
         print(f"OpenRouter error {e.status_code}: {e}")
         if e.status_code == 401:
-            raise HTTPException(status_code=500, detail="AI service authentication failed")
+            raise HTTPException(status_code=500, detail="AI service authentication failed") from e
         if e.status_code == 402:
-            raise HTTPException(status_code=503, detail="AI credits exhausted or key limit reached")
+            raise HTTPException(status_code=503, detail="AI credits exhausted or key limit reached") from e
         if e.status_code == 429:
-            raise HTTPException(status_code=429, detail="Too many requests, please try again shortly")
-        raise HTTPException(status_code=502, detail="AI service error")
+            raise HTTPException(status_code=429, detail="Too many requests, please try again shortly") from e
+        raise HTTPException(status_code=502, detail="AI service error") from e
 
 
-def call_llm(conversation: List[Dict], user_message: str, session_id: str) -> str:
+def call_llm(conversation: list[dict], user_message: str, session_id: str) -> str:
     """Call the LLM through OpenRouter with conversation history, running any tools it asks for"""
 
     # System prompt first
@@ -193,17 +194,13 @@ async def root():
         "message": "AI Digital Twin API (Powered by OpenRouter)",
         "memory_enabled": True,
         "storage": "S3" if USE_S3 else "local",
-        "ai_model": OPENROUTER_MODEL
+        "ai_model": OPENROUTER_MODEL,
     }
 
 
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "use_s3": USE_S3,
-        "ai_model": OPENROUTER_MODEL
-    }
+    return {"status": "healthy", "use_s3": USE_S3, "ai_model": OPENROUTER_MODEL}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -219,14 +216,12 @@ async def chat(request: ChatRequest):
         assistant_response = call_llm(conversation, request.message, session_id)
 
         # Update conversation history
-        conversation.append(
-            {"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()}
-        )
+        conversation.append({"role": "user", "content": request.message, "timestamp": datetime.now(UTC).isoformat()})
         conversation.append(
             {
                 "role": "assistant",
                 "content": assistant_response,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
         )
 
@@ -238,14 +233,14 @@ async def chat(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in chat endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in chat endpoint: {e!s}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(
     request: Request,
-    x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     """Ahmed replies on Telegram to an unanswered question -> the twin learns the answer"""
     # Telegram sends back the secret we registered with setWebhook - reject everyone else
@@ -283,7 +278,7 @@ async def telegram_webhook(
         add_qa(pending["question"], answer)
         send_telegram("✅ Saved. Your twin now knows this.", reply_to_message_id=message.get("message_id"))
         print(f"Telegram webhook: saved answer for: {pending['question'][:60]}")
-    except Exception:
+    except Exception:  # noqa: BLE001 - webhook must always answer 200, or Telegram retries the update
         print("Error handling Telegram webhook:")
         traceback.print_exc()
 
@@ -297,10 +292,10 @@ async def get_conversation(session_id: str):
         conversation = load_conversation(session_id)
         return {"session_id": session_id, "messages": conversation}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # noqa: S104 - local dev only; Lambda never runs this block

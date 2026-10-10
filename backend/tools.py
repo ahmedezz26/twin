@@ -1,10 +1,10 @@
 """Tools the twin can call: notify Ahmed on Telegram about new contacts and unanswered questions."""
+
 import json
 import os
 import re
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional
 
 import boto3
 import dns.exception
@@ -39,11 +39,11 @@ def _truncate(text: str) -> str:
     return text if len(text) <= MAX_FIELD_LENGTH else text[:MAX_FIELD_LENGTH] + "…"
 
 
-def get_telegram_chat_id() -> Optional[str]:
+def get_telegram_chat_id() -> str | None:
     return get_secret("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID_PARAM")
 
 
-def send_telegram(text: str, reply_to_message_id: Optional[int] = None) -> Optional[int]:
+def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | None:
     """Send a plain-text Telegram message to Ahmed. Returns the message id, or None on failure"""
     token = get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM")
     chat_id = get_telegram_chat_id()
@@ -62,7 +62,7 @@ def send_telegram(text: str, reply_to_message_id: Optional[int] = None) -> Optio
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - fixed https:// Telegram URL
             data = json.loads(response.read())
     except urllib.error.HTTPError as e:
         # Telegram explains errors in the response body (never log the URL - it contains the token)
@@ -116,7 +116,7 @@ def _save_notification_count(session_id: str, count: int):
             f.write(body)
 
 
-def _notify(session_id: str, text: str) -> Optional[int]:
+def _notify(session_id: str, text: str) -> int | None:
     """Send a notification unless this conversation already used its quota"""
     count = _get_notification_count(session_id)
     if count >= MAX_NOTIFICATIONS_PER_SESSION:
@@ -168,14 +168,12 @@ def record_user_details(session_id: str, email: str, name: str = "Name not provi
         }
 
     if _get_notification_count(session_id) >= MAX_NOTIFICATIONS_PER_SESSION:
-        return {"status": "error", "message": "Limit reached. Tell the user their details are noted and Ahmed will be in touch."}
+        return {
+            "status": "error",
+            "message": "Limit reached. Tell the user their details are noted and Ahmed will be in touch.",
+        }
 
-    text = (
-        "✍️ New contact from your digital twin\n\n"
-        f"Name: {_truncate(name)}\n"
-        f"Email: {email}\n"
-        f"Notes: {_truncate(notes)}"
-    )
+    text = f"✍️ New contact from your digital twin\n\nName: {_truncate(name)}\nEmail: {email}\nNotes: {_truncate(notes)}"
     if _notify(session_id, text) is None:
         return {"status": "error", "message": "Could not record the details right now."}
     return {"status": "success"}
@@ -191,7 +189,7 @@ def record_unknown_question(session_id: str, question: str):
 
     text = (
         "🚨 Your twin couldn't answer this question:\n\n"
-        f"\"{question}\"\n\n"
+        f'"{question}"\n\n'
         "Reply to this message with the answer and your twin will learn it."
     )
     message_id = _notify(session_id, text)
@@ -244,7 +242,7 @@ tool_map = {
 }
 
 
-def handle_tool_calls(tool_calls, session_id: str) -> List[Dict]:
+def handle_tool_calls(tool_calls, session_id: str) -> list[dict]:
     """Run the tools the model asked for and return their results as tool messages"""
     results = []
     for tool_call in tool_calls:
@@ -253,7 +251,11 @@ def handle_tool_calls(tool_calls, session_id: str) -> List[Dict]:
         tool = tool_map.get(tool_name)
         try:
             arguments = json.loads(tool_call.function.arguments or "{}")
-            result = tool(session_id=session_id, **arguments) if tool else {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            result = (
+                tool(session_id=session_id, **arguments)
+                if tool
+                else {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            )
         except (TypeError, ValueError) as e:
             result = {"status": "error", "message": f"Invalid arguments: {type(e).__name__}"}
         results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})

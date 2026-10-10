@@ -1,5 +1,6 @@
-from pypdf import PdfReader
 import json
+
+from pypdf import PdfReader
 
 # Read LinkedIn PDF
 try:

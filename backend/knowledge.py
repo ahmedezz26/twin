@@ -8,12 +8,12 @@ Layout:
   pending/<telegram_message_id>.json   questions waiting for Ahmed's reply
   qa/<timestamp>-<uuid>.json           answered questions (one object per entry, so saves never overwrite each other)
 """
+
 import json
 import os
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
 
 import boto3
 from botocore.exceptions import ClientError
@@ -21,7 +21,7 @@ from botocore.exceptions import ClientError
 # How long the Q&A list is reused before reading it again from storage
 CACHE_SECONDS = 60
 
-_qa_cache: Optional[List[Dict]] = None
+_qa_cache: list[dict] | None = None
 _qa_cache_time = 0.0
 _s3_client = None
 
@@ -41,7 +41,7 @@ def _s3():
     return _s3_client
 
 
-def _put(key: str, data: Dict):
+def _put(key: str, data: dict):
     body = json.dumps(data, ensure_ascii=False, indent=2)
     if _bucket():
         _s3().put_object(Bucket=_bucket(), Key=key, Body=body, ContentType="application/json")
@@ -52,7 +52,7 @@ def _put(key: str, data: Dict):
             f.write(body)
 
 
-def _get(key: str) -> Optional[Dict]:
+def _get(key: str) -> dict | None:
     if _bucket():
         try:
             response = _s3().get_object(Bucket=_bucket(), Key=key)
@@ -78,7 +78,7 @@ def _delete(key: str):
             os.remove(path)
 
 
-def _list_keys(prefix: str) -> List[str]:
+def _list_keys(prefix: str) -> list[str]:
     if _bucket():
         keys = []
         paginator = _s3().get_paginator("list_objects_v2")
@@ -99,12 +99,12 @@ def save_pending(telegram_message_id: int, question: str, session_id: str):
         {
             "question": question,
             "session_id": session_id,
-            "asked_at": datetime.now(timezone.utc).isoformat(),
+            "asked_at": datetime.now(UTC).isoformat(),
         },
     )
 
 
-def pop_pending(telegram_message_id: int) -> Optional[Dict]:
+def pop_pending(telegram_message_id: int) -> dict | None:
     """Return the pending question for this Telegram message and remove it, or None if unknown"""
     key = f"pending/{telegram_message_id}.json"
     pending = _get(key)
@@ -116,7 +116,7 @@ def pop_pending(telegram_message_id: int) -> Optional[Dict]:
 def add_qa(question: str, answer: str):
     """Save an answered question as its own object"""
     global _qa_cache
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _put(
         f"qa/{now.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}.json",
         {"question": question, "answer": answer, "answered_at": now.isoformat()},
@@ -125,7 +125,7 @@ def add_qa(question: str, answer: str):
     _qa_cache = None
 
 
-def list_qa() -> List[Dict]:
+def list_qa() -> list[dict]:
     """All answered questions, oldest first (cached for CACHE_SECONDS)"""
     global _qa_cache, _qa_cache_time
     if _qa_cache is not None and time.monotonic() - _qa_cache_time < CACHE_SECONDS:
