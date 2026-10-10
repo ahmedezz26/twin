@@ -11,6 +11,7 @@ import dns.exception
 import dns.resolver
 from botocore.exceptions import ClientError
 
+from config import get_settings
 from knowledge import save_pending
 from ssm_secrets import get_secret
 
@@ -40,12 +41,12 @@ def _truncate(text: str) -> str:
 
 
 def get_telegram_chat_id() -> str | None:
-    return get_secret("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID_PARAM")
+    return get_secret("telegram_chat_id")
 
 
 def send_telegram(text: str, reply_to_message_id: int | None = None) -> int | None:
     """Send a plain-text Telegram message to Ahmed. Returns the message id, or None on failure"""
-    token = get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM")
+    token = get_secret("telegram_bot_token")
     chat_id = get_telegram_chat_id()
     if not token or not chat_id:
         print("Telegram not configured: missing bot token or chat id")
@@ -87,16 +88,17 @@ def _limit_key(session_id: str) -> str:
 
 
 def _get_notification_count(session_id: str) -> int:
-    if os.getenv("USE_S3", "false").lower() == "true":
+    settings = get_settings()
+    if settings.use_s3:
         try:
-            response = _s3().get_object(Bucket=os.getenv("S3_BUCKET", ""), Key=_limit_key(session_id))
+            response = _s3().get_object(Bucket=settings.s3_bucket, Key=_limit_key(session_id))
             return json.loads(response["Body"].read())["count"]
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return 0
             raise
 
-    path = os.path.join(os.getenv("MEMORY_DIR", "../memory"), _limit_key(session_id))
+    path = os.path.join(settings.memory_dir, _limit_key(session_id))
     if not os.path.exists(path):
         return 0
     with open(path, "r") as f:
@@ -105,12 +107,13 @@ def _get_notification_count(session_id: str) -> int:
 
 def _save_notification_count(session_id: str, count: int):
     body = json.dumps({"count": count})
-    if os.getenv("USE_S3", "false").lower() == "true":
+    settings = get_settings()
+    if settings.use_s3:
         _s3().put_object(
-            Bucket=os.getenv("S3_BUCKET", ""), Key=_limit_key(session_id), Body=body, ContentType="application/json"
+            Bucket=settings.s3_bucket, Key=_limit_key(session_id), Body=body, ContentType="application/json"
         )
     else:
-        path = os.path.join(os.getenv("MEMORY_DIR", "../memory"), _limit_key(session_id))
+        path = os.path.join(settings.memory_dir, _limit_key(session_id))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(body)

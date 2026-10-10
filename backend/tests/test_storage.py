@@ -23,12 +23,12 @@ def fake_aws():
 
 
 @pytest.fixture
-def knowledge_bucket(fake_aws, monkeypatch):
+def knowledge_bucket(fake_aws, settings):
     """A fake S3 knowledge bucket, and knowledge.py switched to S3 mode."""
     boto3.client("s3", region_name=REGION).create_bucket(
         Bucket="twin-knowledge-test", CreateBucketConfiguration={"LocationConstraint": REGION}
     )
-    monkeypatch.setenv("KNOWLEDGE_BUCKET", "twin-knowledge-test")
+    settings.knowledge_bucket = "twin-knowledge-test"
 
 
 @pytest.fixture
@@ -114,8 +114,8 @@ def test_s3_qa_entries_are_listed_oldest_first(knowledge_bucket):
     assert questions(knowledge.list_qa()) == ["older", "newer"]
 
 
-def test_s3_error_returns_empty_list_instead_of_failing_the_chat(fake_aws, monkeypatch):
-    monkeypatch.setenv("KNOWLEDGE_BUCKET", "bucket-that-does-not-exist")
+def test_s3_error_returns_empty_list_instead_of_failing_the_chat(fake_aws, settings):
+    settings.knowledge_bucket = "bucket-that-does-not-exist"
 
     assert knowledge.list_qa() == []
 
@@ -123,29 +123,30 @@ def test_s3_error_returns_empty_list_instead_of_failing_the_chat(fake_aws, monke
 # --- ssm_secrets.py ----------------------------------------------------------------
 
 
-def test_secret_from_local_environment_wins(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "local-token")
+def test_secret_from_local_environment_wins(settings):
+    settings.telegram_bot_token = "local-token"
+    settings.telegram_bot_token_param = "/twin/test/telegram_bot_token"  # ignored: the local value wins
 
-    assert ssm_secrets.get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM") == "local-token"
+    assert ssm_secrets.get_secret("telegram_bot_token") == "local-token"
 
 
 def test_secret_is_none_when_not_configured():
-    assert ssm_secrets.get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM") is None
+    assert ssm_secrets.get_secret("telegram_bot_token") is None
 
 
-def test_secret_is_read_from_ssm_and_cached(fake_aws, monkeypatch):
+def test_secret_is_read_from_ssm_and_cached(fake_aws, settings):
     ssm = boto3.client("ssm", region_name=REGION)
     ssm.put_parameter(Name="/twin/test/telegram_bot_token", Value="ssm-token", Type="SecureString")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_PARAM", "/twin/test/telegram_bot_token")
+    settings.telegram_bot_token_param = "/twin/test/telegram_bot_token"
 
-    assert ssm_secrets.get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM") == "ssm-token"
+    assert ssm_secrets.get_secret("telegram_bot_token") == "ssm-token"
 
     # Second call must not need SSM: delete the parameter and it still works from the cache
     ssm.delete_parameter(Name="/twin/test/telegram_bot_token")
-    assert ssm_secrets.get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM") == "ssm-token"
+    assert ssm_secrets.get_secret("telegram_bot_token") == "ssm-token"
 
 
-def test_missing_ssm_parameter_returns_none(fake_aws, monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_PARAM", "/twin/test/does-not-exist")
+def test_missing_ssm_parameter_returns_none(fake_aws, settings):
+    settings.telegram_bot_token_param = "/twin/test/does-not-exist"
 
-    assert ssm_secrets.get_secret("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_PARAM") is None
+    assert ssm_secrets.get_secret("telegram_bot_token") is None

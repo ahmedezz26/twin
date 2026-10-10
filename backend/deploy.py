@@ -3,6 +3,18 @@ import shutil
 import subprocess
 import zipfile
 
+# Every backend module the Lambda needs. tests/test_packaging.py fails if a new module is missing here.
+APP_FILES = [
+    "server.py",
+    "lambda_handler.py",
+    "config.py",
+    "context.py",
+    "resources.py",
+    "tools.py",
+    "knowledge.py",
+    "ssm_secrets.py",
+]
+
 
 def main():
     print("Creating Lambda deployment package...")
@@ -42,17 +54,8 @@ def main():
 
     # Copy application files
     print("Copying application files...")
-    for file in [
-        "server.py",
-        "lambda_handler.py",
-        "context.py",
-        "resources.py",
-        "tools.py",
-        "knowledge.py",
-        "ssm_secrets.py",
-    ]:
-        if os.path.exists(file):
-            shutil.copy2(file, "lambda-package/")
+    for file in APP_FILES:
+        shutil.copy2(file, "lambda-package/")  # a missing file stops the build instead of being skipped
 
     # Copy data directory
     if os.path.exists("data"):

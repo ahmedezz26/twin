@@ -2,7 +2,7 @@
 
 Stored in a dedicated S3 bucket that is NOT managed by Terraform, so destroying an
 environment never wipes what the twin has learned. Locally (no KNOWLEDGE_BUCKET set)
-everything is stored as files in ../knowledge instead.
+everything is stored as files in the repo's knowledge/ folder instead.
 
 Layout:
   pending/<telegram_message_id>.json   questions waiting for Ahmed's reply
@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 import boto3
 from botocore.exceptions import ClientError
 
+from config import get_settings
+
 # How long the Q&A list is reused before reading it again from storage
 CACHE_SECONDS = 60
 
@@ -27,11 +29,11 @@ _s3_client = None
 
 
 def _bucket() -> str:
-    return os.getenv("KNOWLEDGE_BUCKET", "")
+    return get_settings().knowledge_bucket
 
 
 def _local_dir() -> str:
-    return os.getenv("KNOWLEDGE_DIR", "../knowledge")
+    return str(get_settings().knowledge_dir)
 
 
 def _s3():

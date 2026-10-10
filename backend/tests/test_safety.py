@@ -1,10 +1,11 @@
 """Tests for the safety net in conftest.py: if these fail, no other test can be trusted."""
 
-import os
 import urllib.request
 
 import pytest
 from conftest import NetworkBlockedError
+
+import config
 
 
 def test_real_network_is_blocked():
@@ -13,7 +14,7 @@ def test_real_network_is_blocked():
 
 
 def test_real_secrets_are_not_loaded():
-    import server  # noqa: F401 - importing runs load_dotenv(), which must do nothing in tests
+    settings = config.get_settings()
 
-    assert os.getenv("TELEGRAM_BOT_TOKEN") is None
-    assert os.getenv("OPENROUTER_API_KEY") is None
+    assert settings.telegram_bot_token is None
+    assert settings.openrouter_api_key is None
