@@ -194,17 +194,13 @@ async def root():
         "message": "AI Digital Twin API (Powered by OpenRouter)",
         "memory_enabled": True,
         "storage": "S3" if USE_S3 else "local",
-        "ai_model": OPENROUTER_MODEL
+        "ai_model": OPENROUTER_MODEL,
     }
 
 
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "use_s3": USE_S3,
-        "ai_model": OPENROUTER_MODEL
-    }
+    return {"status": "healthy", "use_s3": USE_S3, "ai_model": OPENROUTER_MODEL}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -220,9 +216,7 @@ async def chat(request: ChatRequest):
         assistant_response = call_llm(conversation, request.message, session_id)
 
         # Update conversation history
-        conversation.append(
-            {"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()}
-        )
+        conversation.append({"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()})
         conversation.append(
             {
                 "role": "assistant",

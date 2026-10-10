@@ -1,4 +1,5 @@
 """Tools the twin can call: notify Ahmed on Telegram about new contacts and unanswered questions."""
+
 import json
 import os
 import re
@@ -167,14 +168,12 @@ def record_user_details(session_id: str, email: str, name: str = "Name not provi
         }
 
     if _get_notification_count(session_id) >= MAX_NOTIFICATIONS_PER_SESSION:
-        return {"status": "error", "message": "Limit reached. Tell the user their details are noted and Ahmed will be in touch."}
+        return {
+            "status": "error",
+            "message": "Limit reached. Tell the user their details are noted and Ahmed will be in touch.",
+        }
 
-    text = (
-        "✍️ New contact from your digital twin\n\n"
-        f"Name: {_truncate(name)}\n"
-        f"Email: {email}\n"
-        f"Notes: {_truncate(notes)}"
-    )
+    text = f"✍️ New contact from your digital twin\n\nName: {_truncate(name)}\nEmail: {email}\nNotes: {_truncate(notes)}"
     if _notify(session_id, text) is None:
         return {"status": "error", "message": "Could not record the details right now."}
     return {"status": "success"}
@@ -190,7 +189,7 @@ def record_unknown_question(session_id: str, question: str):
 
     text = (
         "🚨 Your twin couldn't answer this question:\n\n"
-        f"\"{question}\"\n\n"
+        f'"{question}"\n\n'
         "Reply to this message with the answer and your twin will learn it."
     )
     message_id = _notify(session_id, text)
@@ -252,7 +251,11 @@ def handle_tool_calls(tool_calls, session_id: str) -> list[dict]:
         tool = tool_map.get(tool_name)
         try:
             arguments = json.loads(tool_call.function.arguments or "{}")
-            result = tool(session_id=session_id, **arguments) if tool else {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            result = (
+                tool(session_id=session_id, **arguments)
+                if tool
+                else {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            )
         except (TypeError, ValueError) as e:
             result = {"status": "error", "message": f"Invalid arguments: {type(e).__name__}"}
         results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})
