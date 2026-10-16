@@ -45,3 +45,28 @@ jobs:
 
       - name: mypy (strict)
         run: uv run --directory backend mypy .
+
+  backend-tests:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+
+      - name: Install dependencies exactly as locked
+        run: uv sync --directory backend --locked
+
+      # No secrets and no network needed: tests/conftest.py fakes the LLM, Telegram and AWS
+      - name: pytest
+        run: uv run --directory backend pytest -q --cov
+
+      # Shows the coverage table on the run's summary page, even when a test failed
+      - name: Coverage summary
+        if: ${{ !cancelled() }}
+        run: uv run --directory backend coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
