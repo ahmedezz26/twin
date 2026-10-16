@@ -70,3 +70,32 @@ jobs:
       - name: Coverage summary
         if: ${{ !cancelled() }}
         run: uv run --directory backend coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Frontend (lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24" # Current LTS; deploy.yml must build with the same version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # --ignore-scripts: packages can't run install scripts, the way npm supply-chain worms spread
+      - name: Install dependencies exactly as locked
+        run: npm ci --ignore-scripts
+
+      - name: ESLint
+        run: npm run lint
+
+      # Also type-checks the TypeScript; no API URL is needed to build
+      - name: Build
+        run: npm run build
