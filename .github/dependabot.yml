@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned actions in .github/workflows up to date: one PR a week that bumps the SHA
+# and its "# vX.Y.Z" comment together. CI runs on that PR like on any other, so a bad update can't merge.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Wait a week after a release: compromised releases are usually caught and pulled within days
+    cooldown:
+      default-days: 7
+    # All action updates in one PR instead of one PR per action
+    groups:
+      github-actions:
+        patterns: ["*"]

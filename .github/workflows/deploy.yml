@@ -15,85 +15,100 @@ on:
           - test
           - prod
 
-permissions:
-  id-token: write
-  contents: read
+# Nothing by default; each job asks for exactly what it needs
+permissions: {}
+
+# One Terraform run per environment at a time; destroy.yml uses the same group.
+# Never cancel: stopping terraform apply halfway leaves a half-applied environment.
+concurrency:
+  group: terraform-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+    name: Deploy to ${{ inputs.environment || 'dev' }}
     runs-on: ubuntu-24.04
-    environment: ${{ github.event.inputs.environment || 'dev' }}
-    
+    # Permissions per job, not per workflow: only this job gets to log in to AWS
+    permissions:
+      id-token: write # Request an OIDC token to log in to AWS, so no AWS keys are stored in GitHub
+      contents: read
+    timeout-minutes: 30
+    environment: ${{ inputs.environment || 'dev' }}
+    # Expressions go into env vars, never straight into run: scripts (template injection)
+    env:
+      ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+
     steps:
+      # Actions are pinned to a full commit SHA, like in ci.yml
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: github-actions-deploy
           aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
+      # uv installs Python 3.13 itself, from backend/.python-version
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: "1.16.4"
           terraform_wrapper: false  # Important: disable wrapper to get raw outputs
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "24" # Same Node as CI builds with
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # The same script you run locally; it finds the account ID itself with `aws sts get-caller-identity`
       - name: Run Deployment Script
-        run: |
-          # Set environment variables for the script
-          export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-          export DEFAULT_AWS_REGION=${{ secrets.DEFAULT_AWS_REGION }}
-          
-          # Make script executable and run it
-          chmod +x scripts/deploy.sh
-          ./scripts/deploy.sh ${{ github.event.inputs.environment || 'dev' }}
+        run: ./scripts/deploy.sh "$ENVIRONMENT"
         env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          
+          DEFAULT_AWS_REGION: ${{ secrets.DEFAULT_AWS_REGION }}
+
       - name: Get Deployment URLs
         id: deploy_outputs
         working-directory: ./terraform
         run: |
-          terraform workspace select ${{ github.event.inputs.environment || 'dev' }}
-          echo "cloudfront_url=$(terraform output -raw cloudfront_url)" >> $GITHUB_OUTPUT
-          echo "api_url=$(terraform output -raw api_gateway_url)" >> $GITHUB_OUTPUT
-          echo "frontend_bucket=$(terraform output -raw s3_frontend_bucket)" >> $GITHUB_OUTPUT
+          terraform workspace select "$ENVIRONMENT"
+          {
+            echo "cloudfront_url=$(terraform output -raw cloudfront_url)"
+            echo "api_url=$(terraform output -raw api_gateway_url)"
+            echo "frontend_bucket=$(terraform output -raw s3_frontend_bucket)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Invalidate CloudFront
+        env:
+          FRONTEND_BUCKET: ${{ steps.deploy_outputs.outputs.frontend_bucket }}
         run: |
           DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?Origins.Items[?starts_with(DomainName, '${{ steps.deploy_outputs.outputs.frontend_bucket }}.s3-website')]].Id | [0]" \
+            --query "DistributionList.Items[?Origins.Items[?starts_with(DomainName, '${FRONTEND_BUCKET}.s3-website')]].Id | [0]" \
             --output text)
-          
+
           if [ "$DISTRIBUTION_ID" != "None" ] && [ -n "$DISTRIBUTION_ID" ]; then
             aws cloudfront create-invalidation \
-              --distribution-id $DISTRIBUTION_ID \
+              --distribution-id "$DISTRIBUTION_ID" \
               --paths "/*"
           fi
 
       - name: Deployment Summary
+        env:
+          CLOUDFRONT_URL: ${{ steps.deploy_outputs.outputs.cloudfront_url }}
+          API_URL: ${{ steps.deploy_outputs.outputs.api_url }}
+          FRONTEND_BUCKET: ${{ steps.deploy_outputs.outputs.frontend_bucket }}
         run: |
           echo "✅ Deployment Complete!"
-          echo "🌐 CloudFront URL: ${{ steps.deploy_outputs.outputs.cloudfront_url }}"
-          echo "📡 API Gateway: ${{ steps.deploy_outputs.outputs.api_url }}"
-          echo "🪣 Frontend Bucket: ${{ steps.deploy_outputs.outputs.frontend_bucket }}"
+          echo "🌐 CloudFront URL: $CLOUDFRONT_URL"
+          echo "📡 API Gateway: $API_URL"
+          echo "🪣 Frontend Bucket: $FRONTEND_BUCKET"

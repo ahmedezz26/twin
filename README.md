@@ -35,7 +35,7 @@ The whole stack runs on AWS, is defined in Terraform, and is deployed through Gi
 - **Lead capture.** Visitors who want to get in touch can leave an email address. It's checked for a valid format and a domain that receives email, then forwarded to Ezz on Telegram.
 - **Conversation memory.** Each chat session's history is stored in S3, so the twin keeps context across messages.
 - **Infrastructure as code.** Every environment (`dev`, `test`, `prod`) is fully reproducible with Terraform and isolated by workspace.
-- **CI/CD.** A push to `main` builds and deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
+- **CI/CD.** Every pull request runs linting, strict type checks, tests, a frontend build and Terraform validation. `main` accepts only pull requests with all checks green, and each merge deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
 
 ---
 
@@ -59,7 +59,7 @@ flowchart LR
 |---|---|---|
 | CloudFront + S3 (frontend) | Serves the static Next.js site | Per environment, managed by Terraform |
 | API Gateway (HTTP API) | Public API with throttling (`/chat`, `/health`, `/telegram-webhook`) | Per environment, managed by Terraform |
-| Lambda (Python 3.12) | FastAPI backend: prompt building, LLM calls, tools, webhook | Per environment, managed by Terraform |
+| Lambda (Python 3.13) | FastAPI backend: prompt building, LLM calls, tools, webhook | Per environment, managed by Terraform |
 | S3 memory bucket | Conversation history and per-session notification counters | Per environment, emptied on destroy |
 | S3 knowledge bucket | Questions answered by Ezz via Telegram | Created once by hand; **survives destroy** |
 | SSM Parameter Store | OpenRouter API key, Telegram bot token, webhook secret, chat ID | Created once by hand; **survives destroy** |
@@ -72,13 +72,14 @@ flowchart LR
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 16 (static export), React 19, Tailwind CSS, TypeScript |
-| Backend | Python, FastAPI, Mangum (Lambda adapter), OpenAI Python SDK, dnspython |
+| Backend | Python 3.13, FastAPI, Pydantic Settings, Mangum (Lambda adapter), OpenAI Python SDK, dnspython |
 | LLM | `openai/gpt-5-mini` via [OpenRouter](https://openrouter.ai), with tool calling and configurable reasoning effort |
 | Infrastructure | Terraform (AWS provider 6.x), S3 backend with `use_lockfile` |
 | AWS services | Lambda, API Gateway, CloudFront, S3, SSM Parameter Store, IAM |
-| CI/CD | GitHub Actions with OIDC (no long-lived AWS keys) |
+| CI/CD | GitHub Actions: checks on every pull request, deploy after merge with OIDC (no long-lived AWS keys) |
+| Code quality | Ruff (lint + format), mypy (strict), pytest, pre-commit hooks, ESLint |
 | Notifications | Telegram Bot API (outgoing messages + incoming webhook) |
-| Tooling | `uv` (Python), Docker (Lambda-compatible packaging), Node.js 20 |
+| Tooling | `uv` (Python), Docker (Lambda-compatible packaging), Node.js 24 |
 
 ---
 
@@ -88,6 +89,7 @@ flowchart LR
 .
 ├── backend/
 │   ├── server.py              # FastAPI app: /chat, /health, /telegram-webhook, tool loop
+│   ├── config.py              # All settings in one validated Pydantic Settings class
 │   ├── context.py             # System prompt (grounding rules, style, learned Q&A, tool rules)
 │   ├── resources.py           # Loads resume, LinkedIn, summary, facts and style from data/
 │   ├── tools.py               # LLM tools, Telegram sender, per-session notification limit
@@ -95,8 +97,10 @@ flowchart LR
 │   ├── ssm_secrets.py         # Reads secrets from .env locally or SSM Parameter Store on Lambda
 │   ├── lambda_handler.py      # Mangum entry point for Lambda
 │   ├── deploy.py              # Builds lambda-deployment.zip inside the Lambda Docker image
-│   ├── requirements.txt       # Lambda runtime dependencies
-│   ├── pyproject.toml         # Local development dependencies (uv)
+│   ├── requirements.txt       # Lambda runtime dependencies, generated from uv.lock
+│   ├── pyproject.toml         # Dependencies and Ruff, mypy and pytest settings
+│   ├── uv.lock                # Exact locked versions
+│   ├── tests/                 # pytest suite (no network, no secrets)
 │   └── data/                  # Source of truth for the twin's knowledge
 ├── frontend/
 │   ├── app/                   # Next.js app router (layout, page, styles)
@@ -108,14 +112,19 @@ flowchart LR
 │   ├── terraform.tfvars       # Default values (model, reasoning effort, limits)
 │   ├── outputs.tf             # URLs and resource names
 │   ├── backend.tf             # S3 remote state (configured by the scripts)
-│   └── versions.tf            # Terraform and provider versions
+│   ├── versions.tf            # Terraform and provider versions
+│   └── .terraform.lock.hcl    # Exact locked provider version and checksums
 ├── scripts/
 │   ├── deploy.sh / .ps1       # Build backend, terraform apply, build and upload frontend
 │   ├── destroy.sh / .ps1      # Empty buckets and terraform destroy
 │   └── set_telegram_webhook.sh# Point the Telegram bot at an environment's API
-└── .github/workflows/
-    ├── deploy.yml             # Deploy on push to main, or manually per environment
-    └── destroy.yml            # Manually destroy an environment (with confirmation)
+├── .pre-commit-config.yaml    # Local hooks: Ruff and mypy on commit, pytest on push
+└── .github/
+    ├── dependabot.yml         # Weekly updates for the pinned actions
+    └── workflows/
+        ├── ci.yml             # Checks on every pull request (required to merge)
+        ├── deploy.yml         # Deploy on push to main, or manually per environment
+        └── destroy.yml        # Manually destroy an environment (with confirmation)
 ```
 
 ---
@@ -172,6 +181,7 @@ Replies are matched to questions by Telegram **message ID**, not by parsing mess
 - **No secrets in code, Terraform state or Lambda configuration.** Secrets live in SSM Parameter Store as encrypted `SecureString` values. The Lambda receives only the parameter **names** and reads the values at cold start.
 - **Least-privilege access.** The Lambda role may read only its own OpenRouter key parameter and `/twin/telegram/*`.
 - **Keyless CI/CD.** GitHub Actions authenticates to AWS through OIDC. The IAM role's trust policy is restricted to this repository using GitHub's immutable owner and repository IDs.
+- **Hardened workflows.** Actions are pinned to full commit SHAs and updated by Dependabot after a 7-day cooldown. Each job gets only the permissions it needs (CI has no AWS access at all), and workflow inputs reach shell scripts only through environment variables, never through `${{ }}` template expansion.
 - **Webhook authentication.** `/telegram-webhook` requires Telegram's secret-token header (compared in constant time) and accepts messages only from Ezz's own chat ID.
 - **Abuse protection.** API Gateway throttling, a per-conversation notification limit, email format and domain checks, length limits on visitor text, and plain-text Telegram messages (no formatting injection).
 - **Spending control.** The OpenRouter API key has its own credit limit, configured in the OpenRouter dashboard.
@@ -183,7 +193,7 @@ Replies are matched to questions by Telegram **message ID**, not by parsing mess
 - An AWS account and the AWS CLI v2, logged in, with region `eu-north-1` (or your chosen region)
 - Terraform 1.10 or newer (required for S3-native state locking)
 - Python 3.13+ and [uv](https://docs.astral.sh/uv/)
-- Node.js 20+
+- Node.js 24+
 - Docker (to build the Lambda package)
 - An [OpenRouter](https://openrouter.ai) account and API key
 - A Telegram bot (from [@BotFather](https://t.me/BotFather)) and your Telegram chat ID
@@ -273,8 +283,18 @@ uv run uvicorn server:app --reload    # http://localhost:8000
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev                           # http://localhost:3000
+```
+
+**Quality checks**
+
+The same checks run in CI on every pull request. Install the local hooks once per clone:
+
+```bash
+uv run --project backend pre-commit install                # Ruff + mypy on commit, pytest on push
+uv run --project backend pre-commit run --all-files        # run the commit hooks on demand
+uv run --directory backend pytest -q                       # tests only
 ```
 
 Telegram can't reach a local machine, so to test the webhook locally, simulate a reply with `curl` against `POST /telegram-webhook`, using the `X-Telegram-Bot-Api-Secret-Token` header.
@@ -285,7 +305,7 @@ Telegram can't reach a local machine, so to test the webhook locally, simulate a
 
 ### Automatic
 
-Every push to `main` deploys the `dev` environment. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
+Every merge to `main` deploys the `dev` environment. A ruleset on `main` allows changes only through pull requests whose four CI checks pass, so only checked code is deployed. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
 
 ### Manual
 
@@ -347,7 +367,7 @@ Point the Telegram bot at the environment's API. Telegram allows one webhook per
 | Destroy an environment | `./scripts/destroy.sh dev` or the **Destroy Environment** workflow (requires typing the environment name). The knowledge bucket and SSM secrets are kept. |
 | Correct or remove a learned answer | Edit or delete the object under `qa/` in the knowledge bucket. Versioning keeps previous copies. Changes take effect within 60 seconds. |
 | Rotate the OpenRouter key | `aws ssm put-parameter --name /twin/dev/openrouter_api_key --type SecureString --value ... --overwrite`. New Lambda instances pick it up without a redeploy. |
-| Change model or reasoning effort | Edit `terraform/terraform.tfvars` and push. |
+| Change model or reasoning effort | Edit `terraform/terraform.tfvars` in a pull request. Merging it deploys the change. |
 | Monitor spending | OpenRouter dashboard, per API key. |
 | View logs | CloudWatch Logs group `/aws/lambda/twin-<env>-api`. |
 
