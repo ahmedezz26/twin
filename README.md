@@ -35,6 +35,7 @@ The whole stack runs on AWS, is defined in Terraform, and is deployed through Gi
 - **Lead capture.** Visitors who want to get in touch can leave an email address. It's checked for a valid format and a domain that receives email, then forwarded to Ezz on Telegram.
 - **Conversation memory.** Each chat session's history is stored in S3, so the twin keeps context across messages.
 - **Infrastructure as code.** Every environment (`dev`, `test`, `prod`) is fully reproducible with Terraform and isolated by workspace.
+- **Behaviour evals.** 25 golden questions are asked to the real model, three times each. A judge model checks every answer against Ezz's data, so a prompt, data or model change that makes the twin invent facts fails its pull request.
 - **CI/CD.** Every pull request runs linting, strict type checks, tests, a frontend build and Terraform validation. `main` accepts only pull requests with all checks green, and each merge deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
 
 ---
@@ -78,6 +79,7 @@ flowchart LR
 | AWS services | Lambda, API Gateway, CloudFront, S3, SSM Parameter Store, IAM |
 | CI/CD | GitHub Actions: checks on every pull request, deploy after merge with OIDC (no long-lived AWS keys) |
 | Code quality | Ruff (lint + format), mypy (strict), pytest, pre-commit hooks, ESLint |
+| Evals | Golden dataset in YAML, deterministic graders, Jev 1.13 (TypeSafe decision model) as judge, Claude Haiku 5.5 to explain failures, a committed baseline |
 | Notifications | Telegram Bot API (outgoing messages + incoming webhook) |
 | Tooling | `uv` (Python), Docker (Lambda-compatible packaging), Node.js 24 |
 
@@ -101,6 +103,7 @@ flowchart LR
 │   ├── pyproject.toml         # Dependencies and Ruff, mypy and pytest settings
 │   ├── uv.lock                # Exact locked versions
 │   ├── tests/                 # pytest suite (no network, no secrets)
+│   ├── evals/                 # Behaviour evals: cases.yaml, run.py, judge.py, baseline.json
 │   └── data/                  # Source of truth for the twin's knowledge
 ├── frontend/
 │   ├── app/                   # Next.js app router (layout, page, styles)
@@ -123,6 +126,7 @@ flowchart LR
     ├── dependabot.yml         # Weekly updates for the pinned actions
     └── workflows/
         ├── ci.yml             # Checks on every pull request (required to merge)
+        ├── evals.yml          # Evals on PRs that can change the answers, and on demand
         ├── deploy.yml         # Deploy on push to main, or manually per environment
         └── destroy.yml        # Manually destroy an environment (with confirmation)
 ```
@@ -297,6 +301,19 @@ uv run --project backend pre-commit run --all-files        # run the commit hook
 uv run --directory backend pytest -q                       # tests only
 ```
 
+**Evals**
+
+Evals check the twin's *answers*, which unit tests (fake LLM) can't. They call the real model, so they need a key of their own: add `EVALS_OPENROUTER_API_KEY=...` to `.env` (a separate OpenRouter key with a small credit limit, so evals never spend the live twin's budget).
+
+```bash
+uv run --directory backend python -m evals.run                         # 25 cases x 3 runs, ~$0.13, ~2 min
+uv run --directory backend python -m evals.run --only grounded --repeats 1
+uv run --directory backend python -m evals.run --rejudge backend/evals/reports/<file>.json   # judge saved answers again
+uv run --directory backend python -m evals.run --save-baseline         # after an accepted change
+```
+
+A run fails on any claim about Ezz that his data doesn't support, on any failed critical case, or when the pass rate drops more than 10 points below `backend/evals/baseline.json`. In CI, the **Evals** workflow runs on pull requests that change the prompt, data, tools, model setting or evals (others skip it in seconds), and anyone with write access can start it from the Actions tab.
+
 Telegram can't reach a local machine, so to test the webhook locally, simulate a reply with `curl` against `POST /telegram-webhook`, using the `X-Telegram-Bot-Api-Secret-Token` header.
 
 ---
@@ -305,7 +322,7 @@ Telegram can't reach a local machine, so to test the webhook locally, simulate a
 
 ### Automatic
 
-Every merge to `main` deploys the `dev` environment. A ruleset on `main` allows changes only through pull requests whose four CI checks pass, so only checked code is deployed. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
+Every merge to `main` deploys the `dev` environment. A ruleset on `main` allows changes only through pull requests whose five CI checks pass (four quality checks plus the evals), so only checked code is deployed. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
 
 ### Manual
 
@@ -367,7 +384,7 @@ Point the Telegram bot at the environment's API. Telegram allows one webhook per
 | Destroy an environment | `./scripts/destroy.sh dev` or the **Destroy Environment** workflow (requires typing the environment name). The knowledge bucket and SSM secrets are kept. |
 | Correct or remove a learned answer | Edit or delete the object under `qa/` in the knowledge bucket. Versioning keeps previous copies. Changes take effect within 60 seconds. |
 | Rotate the OpenRouter key | `aws ssm put-parameter --name /twin/dev/openrouter_api_key --type SecureString --value ... --overwrite`. New Lambda instances pick it up without a redeploy. |
-| Change model or reasoning effort | Edit `terraform/terraform.tfvars` in a pull request. Merging it deploys the change. |
+| Change model or reasoning effort | Edit `terraform/terraform.tfvars` in a pull request. The evals run on it automatically; merging it deploys the change. |
 | Monitor spending | OpenRouter dashboard, per API key. |
 | View logs | CloudWatch Logs group `/aws/lambda/twin-<env>-api`. |
 

@@ -125,8 +125,10 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "types-boto3", extra = ["s3", "ssm"] },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -150,8 +152,10 @@ dev = [
     { name = "pre-commit", specifier = ">=4.6.2" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.17.0" },
     { name = "types-boto3", extras = ["s3", "ssm"], specifier = ">=1.43.111" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260906" },
 ]
 
 [[package]]
@@ -1494,6 +1498,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f6/79/ce0a5c1e63a5e45d4bbe0b8339281dd46ba5df69a547b3c164a56a0d4b92/types_boto3_ssm-1.43.104.tar.gz", hash = "sha256:0ffc6d32ce491ef18d0dc2d95514015ee71aef9c51c73cee1930a0c9e0cfce5b", size = 98031, upload-time = "2026-09-28T20:23:49.06Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/95/07/1119c02f66d487bee5379cb6ca390b2156931e3d07521a475d9524e07007/types_boto3_ssm-1.43.104-py3-none-any.whl", hash = "sha256:1a98230c4e9604dc286b10f28e9043e0404a03f5da2b4e33b1d96d97c42b40e1", size = 99668, upload-time = "2026-09-28T20:23:46.678Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260906"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/6e/abec85b9013db5b934b0280a6dd104904d84f7bcbaab2e2f3def87ac7463/types_pyyaml-6.0.12.20260906.tar.gz", hash = "sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212", size = 18649, upload-time = "2026-09-06T06:35:35.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/c0/fc0644b7ddcfb969e95845837143cb5173ddd6e06ee4ba5fc493cd9329b7/types_pyyaml-6.0.12.20260906-py3-none-any.whl", hash = "sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b", size = 21282, upload-time = "2026-09-06T06:35:34.372Z" },
 ]
 
 [[package]]
