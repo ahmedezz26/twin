@@ -1,0 +1,2 @@
+# Eval reports contain full model answers; regenerate them with python -m evals.run
+reports/
