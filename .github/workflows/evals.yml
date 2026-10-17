@@ -1,5 +1,5 @@
 # Evals: ask the real model the golden questions, judge the answers, compare with evals/baseline.json.
-# They cost money (~$0.13 a full run), so a PR runs them only when it can change the twin's answers:
+# They cost money (~$0.14 a full run), so a PR runs them only when it can change the twin's answers:
 # the prompt, the data, the tools, the model setting, or the evals themselves. Anyone with write access
 # can also start them by hand (Actions tab → Evals → Run workflow).
 name: Evals
@@ -10,7 +10,7 @@ on:
 
 # Least privilege: read the code, nothing else. The OpenRouter key comes from a secret, not a token.
 # Accepted risk (zizmor secrets-outside-env): the key is a repository secret, not an environment secret.
-# Only this repo's reviewed workflows can read it (never fork or Dependabot PRs), and it has a $3 limit.
+# Only this repo's reviewed workflows can read it (never fork or Dependabot PRs), and it has a small credit limit.
 permissions:
   contents: read
 

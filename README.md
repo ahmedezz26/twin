@@ -35,7 +35,7 @@ The whole stack runs on AWS, is defined in Terraform, and is deployed through Gi
 - **Lead capture.** Visitors who want to get in touch can leave an email address. It's checked for a valid format and a domain that receives email, then forwarded to Ezz on Telegram.
 - **Conversation memory.** Each chat session's history is stored in S3, so the twin keeps context across messages.
 - **Infrastructure as code.** Every environment (`dev`, `test`, `prod`) is fully reproducible with Terraform and isolated by workspace.
-- **Behaviour evals.** 25 golden questions are asked to the real model, three times each. A judge model checks every answer against Ezz's data, so a prompt, data or model change that makes the twin invent facts fails its pull request.
+- **Behaviour evals.** 27 golden questions are asked to the real model, three times each. A judge model checks every answer against Ezz's data, so a prompt, data or model change that makes the twin invent facts fails its pull request.
 - **CI/CD.** Every pull request runs linting, strict type checks, tests, a frontend build and Terraform validation. `main` accepts only pull requests with all checks green, and each merge deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
 
 ---
@@ -306,7 +306,7 @@ uv run --directory backend pytest -q                       # tests only
 Evals check the twin's *answers*, which unit tests (fake LLM) can't. They call the real model, so they need a key of their own: add `EVALS_OPENROUTER_API_KEY=...` to `.env` (a separate OpenRouter key with a small credit limit, so evals never spend the live twin's budget).
 
 ```bash
-uv run --directory backend python -m evals.run                         # 25 cases x 3 runs, ~$0.13, ~2 min
+uv run --directory backend python -m evals.run                         # 27 cases x 3 runs, ~$0.14, ~2.5 min
 uv run --directory backend python -m evals.run --only grounded --repeats 1
 uv run --directory backend python -m evals.run --rejudge backend/evals/reports/<file>.json   # judge saved answers again
 uv run --directory backend python -m evals.run --save-baseline         # after an accepted change
