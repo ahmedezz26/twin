@@ -47,7 +47,7 @@ Set-Location ..\frontend
 Write-Host "Setting API URL for production..." -ForegroundColor Yellow
 "NEXT_PUBLIC_API_URL=$ApiUrl" | Out-File .env.production -Encoding utf8
 
-npm install
+npm ci --ignore-scripts  # exactly as locked, no install scripts (same as CI)
 npm run build
 aws s3 sync .\out "s3://$FrontendBucket/" --delete
 Set-Location ..

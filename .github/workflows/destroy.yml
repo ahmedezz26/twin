@@ -15,54 +15,65 @@ on:
         description: 'Type the environment name to confirm destruction'
         required: true
 
-permissions:
-  id-token: write
-  contents: read
+# Nothing by default; each job asks for exactly what it needs
+permissions: {}
+
+# Same group as deploy.yml: a destroy never runs while a deploy of the same environment is applying
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
 
 jobs:
   destroy:
-    name: Destroy ${{ github.event.inputs.environment }}
+    name: Destroy ${{ inputs.environment }}
     runs-on: ubuntu-24.04
-    environment: ${{ github.event.inputs.environment }}
-    
+    # Permissions per job, not per workflow: only this job gets to log in to AWS
+    permissions:
+      id-token: write # Request an OIDC token to log in to AWS, so no AWS keys are stored in GitHub
+      contents: read
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    # Inputs go into env vars, never straight into run: scripts (template injection).
+    # `confirm` is free text, so `$(...)` typed into it would otherwise run as a command.
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      CONFIRM: ${{ inputs.confirm }}
+
     steps:
       - name: Verify confirmation
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "${{ github.event.inputs.environment }}" ]; then
+          if [ "$CONFIRM" != "$ENVIRONMENT" ]; then
             echo "❌ Confirmation does not match environment name!"
-            echo "You entered: '${{ github.event.inputs.confirm }}'"
-            echo "Expected: '${{ github.event.inputs.environment }}'"
+            echo "You entered: '$CONFIRM'"
+            echo "Expected: '$ENVIRONMENT'"
             exit 1
           fi
-          echo "✅ Destruction confirmed for ${{ github.event.inputs.environment }}"
+          echo "✅ Destruction confirmed for $ENVIRONMENT"
 
+      # Actions are pinned to a full commit SHA, like in ci.yml
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: github-actions-destroy
           aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: "1.16.4"
           terraform_wrapper: false  # Important: disable wrapper to get raw outputs
 
+      # The same script you run locally; it finds the account ID itself with `aws sts get-caller-identity`
       - name: Run Destroy Script
-        run: |
-          # Set environment variables for the script
-          export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-          export DEFAULT_AWS_REGION=${{ secrets.DEFAULT_AWS_REGION }}
-          
-          # Make script executable and run it
-          chmod +x scripts/destroy.sh
-          ./scripts/destroy.sh ${{ github.event.inputs.environment }}
+        run: ./scripts/destroy.sh "$ENVIRONMENT"
         env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          DEFAULT_AWS_REGION: ${{ secrets.DEFAULT_AWS_REGION }}
 
       - name: Destruction Complete
-        run: |
-          echo "✅ Environment ${{ github.event.inputs.environment }} has been destroyed!"
+        run: echo "✅ Environment $ENVIRONMENT has been destroyed!"
