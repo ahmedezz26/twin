@@ -312,7 +312,7 @@ uv run --directory backend python -m evals.run --rejudge backend/evals/reports/<
 uv run --directory backend python -m evals.run --save-baseline         # after an accepted change
 ```
 
-A run fails on any claim about Ezz that his data doesn't support, on any failed critical case, or when the pass rate drops more than 10 points below `backend/evals/baseline.json`. In CI, the **Evals** workflow runs on pull requests that change the prompt, data, tools, model setting or evals (others skip it in seconds), and anyone with write access can start it from the Actions tab.
+A run fails on any claim about Ezz that his data doesn't support, on any failed critical case, or when the pass rate drops more than 10 points below `backend/evals/baseline.json`. In CI, the **Evals** workflow runs on pull requests that change the prompt, data, tools, model setting or evals (others skip it in seconds), and anyone with write access can start it from the Actions tab. Within a pull request, a passing result is reused for later pushes that leave those files unchanged (for example a README edit), for the rest of the ISO week.
 
 Telegram can't reach a local machine, so to test the webhook locally, simulate a reply with `curl` against `POST /telegram-webhook`, using the `X-Telegram-Bot-Api-Secret-Token` header.
 
