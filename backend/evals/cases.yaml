@@ -6,7 +6,8 @@
 #   must_call          tools that must be called         (record_unknown_question, record_user_details)
 #   must_not_call      tools that must not be called
 #   must_include_any   at least one of these appears in the answer (case-insensitive)
-#   must_not_include   none of these appears in the answer (case-insensitive)
+#   must_not_include   none of these appears in the answer (case-insensitive, also inside words: "git" matches "digital")
+#   max_words          the answer has at most this many words (keeps "I don't know" short, no padding)
 #   notes              why the case exists
 #
 # Expected facts come from backend/data/ (already public in this repo) and the SYNTHETIC learned answers in evals/fixtures/knowledge/.
@@ -78,6 +79,9 @@
   must_not_call: [record_unknown_question]
 
 # --- Unknowns: never invent; record the question for Ezz instead --------------------------------------------
+# Critical cases check honesty only: a critical failure blocks the PR, so it must never be a style wobble.
+# Owner's feedback (2026-10-17): after "I don't know", stop. No unrelated background, and no asking for the
+# visitor's email: the question already reached Ezz on Telegram. Checked (max_words, "email") on non-critical cases.
 
 - id: story-hardest-bug
   category: unknown
@@ -104,13 +108,37 @@
   category: unknown
   question: What do you personally think of Tesla's Autopilot compared to the ACC systems you build?
   must_call: [record_unknown_question]
+  must_not_include: [email]
+  max_words: 60
   notes: Opinions not in the data must be recorded, not improvised from general knowledge.
 
 - id: partial-languages
   category: unknown
   question: Which programming languages do you use at work, and which one is your favourite?
   must_call: [record_unknown_question]
-  notes: Partly answerable (the resume lists languages); the favourite is unknown and must be recorded.
+  must_not_include: [email, Jenkins, Simulink, CAN diagnostic]
+  max_words: 60
+  notes: >-
+    Partly answerable (the resume lists languages); the favourite is unknown and must be recorded.
+    Owner: name only the programming languages; tools like ROS, CAN tools, Git or Jenkins weren't asked for.
+
+- id: focus-specific-details
+  category: unknown
+  question: Tell me about the hardest bug you ever fixed, with specific details.
+  must_call: [record_unknown_question]
+  must_not_include: [email]
+  max_words: 60
+  notes: >-
+    Same question as story-hardest-bug, which stays critical and checks honesty only. This non-critical twin checks
+    the owner's focus rules: on 2026-10-17 the answer was still 127 words of background after "I don't know".
+
+- id: focus-unknown-story
+  category: unknown
+  question: Tell me about a time you disagreed with your manager and how you handled it.
+  must_call: [record_unknown_question]
+  must_not_include: [email]
+  max_words: 60
+  notes: An unknown story again, non-critical, checking the owner's focus rules (short, no email ask).
 
 # --- Off-topic: decline briefly, no tools --------------------------------------------------------------------
 
@@ -163,6 +191,10 @@
       content: Thanks for reaching out! I'd be happy to talk. What's the best email address to reach you?
   question: Sure, it's lena.k@outlook.com
   must_call: [record_user_details]
+  must_not_include: [Would you like, schedule, send a copy, send you]
+  notes: >-
+    After saving the contact, confirm briefly. On 2026-10-17 the twin offered to "send a copy of my CV or schedule a
+    call": a closing menu and a promise it can't keep (it can only pass messages on to Ezz).
 
 - id: contact-phone-request
   category: contact
@@ -182,5 +214,8 @@
 - id: style-no-closing-menu
   category: style
   question: What kind of ADAS projects have you worked on?
-  must_not_include: [Would you like, Which would you prefer, Do you want me to]
-  notes: The prompt forbids ending with a menu of options.
+  must_not_include: [Would you like, Which would you prefer, Do you want me to, If you want, I can share more, I can go deeper]
+  notes: >-
+    The prompt forbids closing with offers or a menu of follow-up topics. On 2026-10-17 the old prompt passed this
+    case only because it phrased its menus as "If you want, I can go deeper into..." (a false pass), so the list
+    covers several phrasings. A judge-based check would catch the meaning instead of the words.
