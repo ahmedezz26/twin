@@ -12,11 +12,13 @@ Focus (padding, unasked-for offers) is scored but doesn't block yet: neither jud
 """
 
 import json
+import time
+import urllib.error
 import urllib.request
 from typing import Any
 
-from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, SecretStr
+from openai import OpenAI, OpenAIError
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
 
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"  # Jev isn't a chat model: it has its own endpoint
 JEV_MODEL = "typesafe/jev-1.13"  # pinned version, not ~typesafe/jev-latest: a gate needs a fixed instrument
@@ -103,29 +105,42 @@ class Judge:
             headers={"Authorization": f"Bearer {self.api_key.get_secret_value()}", "Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # fixed https URL above
-            result: dict[str, Any] = json.loads(response.read())
-        return result
+        for attempt in range(3):  # a network hiccup must not turn a PR red
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # fixed https URL above
+                    result: dict[str, Any] = json.loads(response.read())
+                return result
+            except (urllib.error.URLError, TimeoutError):
+                if attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        raise AssertionError("unreachable")
 
     def _explain(self, question: str, answer: str, calls: list[dict[str, Any]]) -> tuple[list[str], float]:
-        """Ask Haiku to quote the unsupported claims (structured output: it must return exactly this JSON shape)"""
-        response = self.explainer.chat.completions.create(
-            model=EXPLAINER_MODEL,
-            messages=[
-                {"role": "system", "content": EXPLAIN_PROMPT + self.briefing},
-                {
-                    "role": "user",
-                    "content": f"QUESTION:\n{question}\n\nTOOLS THE TWIN CALLED:\n{json.dumps(calls) if calls else '(none)'}"
-                    f"\n\nANSWER:\n{answer}",
+        """Ask Haiku to quote the unsupported claims (structured output: it must return exactly this JSON shape).
+
+        Best effort: Jev has already decided, so a failed explanation must never fail the run.
+        """
+        try:
+            response = self.explainer.chat.completions.create(
+                model=EXPLAINER_MODEL,
+                messages=[
+                    {"role": "system", "content": EXPLAIN_PROMPT + self.briefing},
+                    {
+                        "role": "user",
+                        "content": f"QUESTION:\n{question}\n\nTOOLS THE TWIN CALLED:\n{json.dumps(calls) if calls else '(none)'}"
+                        f"\n\nANSWER:\n{answer}",
+                    },
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "explanation", "strict": True, "schema": Explanation.model_json_schema()},
                 },
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": "explanation", "strict": True, "schema": Explanation.model_json_schema()},
-            },
-            temperature=0,
-            max_tokens=800,
-        )
-        explanation = Explanation.model_validate_json(response.choices[0].message.content or "")
-        cost = float((response.usage.model_extra or {}).get("cost") or 0.0) if response.usage else 0.0
-        return explanation.unsupported_claims, cost
+                temperature=0,
+                max_tokens=2000,
+            )
+            explanation = Explanation.model_validate_json(response.choices[0].message.content or "")
+            cost = float((response.usage.model_extra or {}).get("cost") or 0.0) if response.usage else 0.0
+            return explanation.unsupported_claims, cost
+        except (OpenAIError, ValidationError) as e:
+            return [f"(explanation unavailable: {type(e).__name__})"], 0.0

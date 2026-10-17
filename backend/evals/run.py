@@ -211,7 +211,10 @@ def evaluate(
     if judge is None:
         return failures, None, 0.0
     history = [turn.model_dump() for turn in case.history]
-    result = judge(case.question, history, answer, tool_calls)
+    try:
+        result = judge(case.question, history, answer, tool_calls)
+    except Exception as e:  # noqa: BLE001  # one unjudgeable answer fails that run, never the whole eval
+        return [*failures, f"judge error: {type(e).__name__}: {e}"], None, 0.0
     if not result.grounded:  # blocking: a claim about Ezz that his data doesn't support
         failures += [f"judge: unsupported claim: {claim}" for claim in result.unsupported_claims] or [
             f"judge: ungrounded (p={result.grounded_p:.2f})"
