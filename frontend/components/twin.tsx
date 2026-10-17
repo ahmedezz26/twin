@@ -108,7 +108,7 @@ export default function Twin() {
             <div className="bg-gradient-to-r from-slate-700 to-slate-800 text-white p-4 rounded-t-lg">
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                     <Bot className="w-6 h-6" />
-                    Ahmed Ezz's AI Digital Twin
+                    Ahmed Ezz&apos;s AI Digital Twin
                 </h2>
             </div>
 
