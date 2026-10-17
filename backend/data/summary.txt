@@ -1,6 +1,8 @@
 My name is Ahmed Ezzeldeen Mahmoud Ibrahim.
 I am an AI-ADAS System engineer.
 I have a B1 driving license for vehicle testing from BMW.
+Programming languages I use at work: C, C++ and Python.
+Tools I work with: Git, Jenkins, MATLAB/Simulink, ROS and CAN diagnostic tools.
 
 here is the summary of courses I have took:
 AI/ML & LLM Engineering:

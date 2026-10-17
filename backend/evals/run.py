@@ -83,6 +83,7 @@ class Case(BaseModel):
     must_not_call: list[str] = []
     must_include_any: list[str] = []  # case-insensitive; at least one must appear
     must_not_include: list[str] = []  # case-insensitive; none may appear
+    max_words: int | None = None  # keeps answers to the point, e.g. a short "I don't know" without padding
     notes: str = ""
 
 
@@ -200,6 +201,8 @@ def grade(case: Case, answer: str, tool_calls: list[dict[str, Any]]) -> list[str
     if case.must_include_any and not any(word.lower() in text for word in case.must_include_any):
         failures.append(f"mentions none of {case.must_include_any}")
     failures += [f'contains "{phrase}"' for phrase in case.must_not_include if phrase.lower() in text]
+    if case.max_words is not None and (words := len(re.findall(r"\w+", answer))) > case.max_words:
+        failures.append(f"{words} words, more than {case.max_words}")
     return failures
 
 
