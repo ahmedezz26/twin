@@ -14,7 +14,8 @@ updates:
       github-actions:
         patterns: ["*"]
 
-  # The same for the images in backend/Dockerfile: bumps the tag and its @sha256 digest together
+  # The same for the images in backend/Dockerfile: bumps the tag and its @sha256 digest together.
+  # Registries publish no release dates, so the cooldown can't apply here (accepted: official images, and CI must pass).
   - package-ecosystem: "docker"
     directory: "/backend"
     schedule:
@@ -24,3 +25,9 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+    ignore:
+      # Python stays on 3.13 like the Lambda runtime: only the weekly rebuilds of 3.13 (OS security patches) come through
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # uv is upgraded by hand in the Dockerfile, ci.yml and deploy.yml together, so they never differ
+      - dependency-name: "*astral-sh/uv"
