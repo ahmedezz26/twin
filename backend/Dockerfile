@@ -3,10 +3,10 @@
 # Build from the repo root: docker build -t twin-backend backend
 
 # uv, only to install the dependencies. Images are pinned by version and digest, like the GitHub Actions.
-FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
 # ---- Stage 1: build. Installs the locked dependencies into a virtual environment.
-FROM python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS build
+FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS build
 COPY --from=uv /uv /bin/uv
 
 # Compile to bytecode now (faster start), copy files out of uv's cache (it's a separate mount),
@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
 # ---- Stage 2: runtime. Python, the installed dependencies and the app; no uv, no cache.
-FROM python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS runtime
+FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 
 # Run as an unprivileged user, never root
 RUN groupadd --system --gid 999 twin \
