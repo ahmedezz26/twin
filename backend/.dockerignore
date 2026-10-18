@@ -1,0 +1,8 @@
+# Deny everything, then allow only what the image needs.
+# Anything new in backend/ (a .env, a key, a test report) stays out of the image unless it's allowed here on purpose.
+*
+!pyproject.toml
+!uv.lock
+!*.py
+!data/
+**/.DS_Store

@@ -36,7 +36,7 @@ The whole stack runs on AWS, is defined in Terraform, and is deployed through Gi
 - **Conversation memory.** Each chat session's history is stored in S3, so the twin keeps context across messages.
 - **Infrastructure as code.** Every environment (`dev`, `test`, `prod`) is fully reproducible with Terraform and isolated by workspace.
 - **Behaviour evals.** 27 golden questions are asked to the real model, three times each. A judge model checks every answer against Ezz's data, so a prompt, data or model change that makes the twin invent facts fails its pull request.
-- **CI/CD.** Every pull request runs linting, strict type checks, tests, a frontend build and Terraform validation. `main` accepts only pull requests with all checks green, and each merge deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
+- **CI/CD.** Every pull request runs linting, strict type checks, tests, a frontend build, Terraform validation and a Docker build that starts the backend and checks its health. `main` accepts only pull requests with all checks green, and each merge deploys automatically. Environments can be deployed or destroyed from the GitHub Actions UI.
 
 ---
 
@@ -99,6 +99,8 @@ flowchart LR
 │   ├── ssm_secrets.py         # Reads secrets from .env locally or SSM Parameter Store on Lambda
 │   ├── lambda_handler.py      # Mangum entry point for Lambda
 │   ├── deploy.py              # Builds lambda-deployment.zip inside the Lambda Docker image
+│   ├── Dockerfile             # Backend image for local and container use (uv, multi-stage, non-root)
+│   ├── .dockerignore          # Allowlist of what goes into the image (never .env)
 │   ├── requirements.txt       # Lambda runtime dependencies, generated from uv.lock
 │   ├── pyproject.toml         # Dependencies and Ruff, mypy and pytest settings
 │   ├── uv.lock                # Exact locked versions
@@ -120,10 +122,12 @@ flowchart LR
 ├── scripts/
 │   ├── deploy.sh / .ps1       # Build backend, terraform apply, build and upload frontend
 │   ├── destroy.sh / .ps1      # Empty buckets and terraform destroy
+│   ├── dev.sh                 # Local development: backend in Docker + frontend dev server
 │   └── set_telegram_webhook.sh# Point the Telegram bot at an environment's API
+├── compose.yaml               # Local backend container: ports, .env, memory/knowledge folders, healthcheck, watch
 ├── .pre-commit-config.yaml    # Local hooks: Ruff and mypy on commit, pytest on push
 └── .github/
-    ├── dependabot.yml         # Weekly updates for the pinned actions
+    ├── dependabot.yml         # Weekly updates for the pinned actions and Docker images
     └── workflows/
         ├── ci.yml             # Checks on every pull request (required to merge)
         ├── evals.yml          # Evals on PRs that can change the answers, and on demand
@@ -198,7 +202,7 @@ Replies are matched to questions by Telegram **message ID**, not by parsing mess
 - Terraform 1.10 or newer (required for S3-native state locking)
 - Python 3.13+ and [uv](https://docs.astral.sh/uv/)
 - Node.js 24+
-- Docker (to build the Lambda package)
+- Docker (to build the Lambda package and to run the backend locally)
 - An [OpenRouter](https://openrouter.ai) account and API key
 - A Telegram bot (from [@BotFather](https://t.me/BotFather)) and your Telegram chat ID
 - A GitHub repository for CI/CD
@@ -276,7 +280,15 @@ TELEGRAM_WEBHOOK_SECRET=any-random-value-for-local-testing
 
 Locally, conversation memory is stored in `memory/` and learned Q&A in `knowledge/`. Both folders are git-ignored.
 
-**Backend**
+**Quick start (Docker)**
+
+```bash
+./scripts/dev.sh                      # backend in Docker on :8000, frontend on :3000; Ctrl+C stops both
+```
+
+The script starts the backend with Docker Compose, waits until its healthcheck passes, rebuilds it when a file in `backend/` changes (`docker compose watch`), and runs the frontend dev server. To run only the backend container: `docker compose up --watch`. Secrets come from `.env` at run time and are never built into the image.
+
+**Backend without Docker**
 
 ```bash
 cd backend
@@ -322,7 +334,7 @@ Telegram can't reach a local machine, so to test the webhook locally, simulate a
 
 ### Automatic
 
-Every merge to `main` deploys the `dev` environment. A ruleset on `main` allows changes only through pull requests whose five CI checks pass (four quality checks plus the evals), so only checked code is deployed. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
+Every merge to `main` deploys the `dev` environment. A ruleset on `main` allows changes only through pull requests whose six checks pass (five CI checks plus the evals), so only checked code is deployed. To deploy `test` or `prod`, run the **Deploy** workflow manually from the Actions tab and choose the environment.
 
 ### Manual
 

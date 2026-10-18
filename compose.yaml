@@ -1,0 +1,34 @@
+# Local development: the twin's backend in Docker, on http://localhost:8000
+#   docker compose up --watch   start, and rebuild + restart the backend when you save a file in backend/
+#   Ctrl+C                       stop
+#   docker compose down          remove the container (conversations stay in ./memory on the Mac)
+# The frontend keeps running on the Mac: cd frontend && npm run dev
+name: twin
+
+services:
+  backend:
+    build: ./backend
+    # 127.0.0.1: only this Mac can reach it, not other devices on the same network
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Secrets are handed to the running container, never built into the image.
+    # Optional, so the container also starts without them (CI, a fresh clone): /health works, chatting needs the keys.
+    env_file:
+      - path: .env
+        required: false
+    # Conversations and learned answers are kept on the Mac, so they survive the container
+    volumes:
+      - ./memory:/app/memory
+      - ./knowledge:/app/knowledge
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    develop:
+      watch:
+        # A change to anything the image is built from (code, data/, the lock file) rebuilds it.
+        # The layer cache keeps that to seconds, and you run the same image you'd ship.
+        - action: rebuild
+          path: ./backend

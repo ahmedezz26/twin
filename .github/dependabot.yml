@@ -13,3 +13,14 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # The same for the images in backend/Dockerfile: bumps the tag and its @sha256 digest together
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]

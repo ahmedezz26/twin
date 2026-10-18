@@ -130,3 +130,32 @@ jobs:
         run: |
           touch ../backend/lambda-deployment.zip
           terraform validate
+
+  docker:
+    name: Docker (build, health check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The same build as `docker compose up` on the laptop, here on an x86_64 CPU (the laptop is arm64)
+      - name: Build the image
+        run: docker compose build
+
+      # No .env in CI, so the backend starts without secrets; --wait returns once its healthcheck passes.
+      # Catches what the unit tests can't: a file the .dockerignore leaves out, a library missing from the image.
+      - name: Start the backend and wait until healthy
+        run: docker compose up --detach --wait --wait-timeout 60
+
+      - name: Check /health and that it doesn't run as root
+        run: |
+          curl --fail --silent --show-error http://localhost:8000/health
+          uid=$(docker compose exec -T backend id -u)
+          echo "Container user id: $uid"
+          test "$uid" != "0"
+
+      - name: Show the backend's logs
+        if: ${{ failure() }}
+        run: docker compose logs
