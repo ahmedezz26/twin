@@ -6,7 +6,7 @@
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
 # ---- Stage 1: build. Installs the locked dependencies into a virtual environment.
-FROM python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS build
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS build
 COPY --from=uv /uv /bin/uv
 
 # Compile to bytecode now (faster start), copy files out of uv's cache (it's a separate mount),
@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project
 
 # ---- Stage 2: runtime. Python, the installed dependencies and the app; no uv, no cache.
-FROM python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS runtime
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runtime
 
 # Run as an unprivileged user, never root
 RUN groupadd --system --gid 999 twin \
